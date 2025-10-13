@@ -130,9 +130,25 @@ void EcoWattDevice::getStatistics(char* outBuf, size_t outBufSize) const {
 }
 
 void EcoWattDevice::onConfigUpdated() {
-    Logger::info("Remote configuration updated. Applying changes...");
+    Logger::info("[EcoWattDevice] Remote configuration updated. Applying changes...");
+    
+    // Get the updated configuration
     AcquisitionConfig acq_conf = config_->getAcquisitionConfig();
-    scheduler_->updateConfig(acq_conf.minimum_registers.data(), acq_conf.minimum_registers.size(), acq_conf.polling_interval_ms);
+    
+    // Apply to acquisition scheduler in a thread-safe manner
+    // The scheduler's updateConfig method will handle the update without interrupting ongoing acquisition
+    if (scheduler_) {
+        scheduler_->updateConfig(
+            acq_conf.minimum_registers.data(), 
+            acq_conf.minimum_registers.size(), 
+            acq_conf.polling_interval_ms
+        );
+        Logger::info("[EcoWattDevice] Applied config to scheduler: interval=%u ms, registers=%u",
+                     acq_conf.polling_interval_ms,
+                     (unsigned)acq_conf.minimum_registers.size());
+    } else {
+        Logger::warn("[EcoWattDevice] Scheduler not initialized, cannot apply config");
+    }
 }
 
 void EcoWattDevice::executeCommand(const char* cmdJson) {
