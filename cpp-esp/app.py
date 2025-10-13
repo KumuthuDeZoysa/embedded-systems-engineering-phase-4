@@ -5,6 +5,10 @@ import struct
 import datetime
 import threading
 import time
+import hmac
+import hashlib
+import base64
+import json
 
 app = Flask(__name__)
 
@@ -15,6 +19,32 @@ BENCHMARKS = []
 # Simple register map for simulator
 SIM_REGISTERS = {}
 SIM_EXCEPTIONS = set()
+
+# -------- Runtime Configuration Management --------
+# Per-device pending config updates
+PENDING_CONFIGS = {}  # device_id -> {nonce, config_update}
+CONFIG_ACKS = []      # List of all config acknowledgments received
+CONFIG_HISTORY = []   # Full history of config changes
+
+# -------- Command Execution Management --------
+PENDING_COMMANDS = {}  # device_id -> {nonce, command}
+COMMAND_RESULTS = []   # List of all command execution results
+COMMAND_HISTORY = []   # Full history of commands
+
+# -------- FOTA Management --------
+FIRMWARE_MANIFEST = None
+FIRMWARE_CHUNKS = {}   # chunk_number -> {data, mac}
+FOTA_STATUS = {}       # device_id -> {chunk_received, verified, last_update}
+
+# -------- Security --------
+PRE_SHARED_KEY = b"EcoWatt_Secure_Key_2025"  # PSK for HMAC
+NONCE_STORE = {}  # device_id -> last_seen_nonce (anti-replay)
+ENCRYPTION_KEY = b"EcoWatt_AES_Key_32_Bytes_Long!!"  # 32 bytes for AES-256
+
+# -------- Logging --------
+SECURITY_LOGS = []  # Security events (HMAC failures, replay attacks, etc.)
+FOTA_LOGS = []      # FOTA operations (upload, download, verify, rollback)
+COMMAND_LOGS = []   # Command forwarding to Modbus (detailed)
 
 # -------- Debounced batching state (per device) --------
 FLUSH_INTERVAL_SEC = 15
@@ -356,6 +386,634 @@ def inverter_config():
             except Exception:
                 pass
     return jsonify({'status': 'ok', 'registers': SIM_REGISTERS, 'exceptions': list(SIM_EXCEPTIONS)})
+
+# ============ RUNTIME CONFIGURATION ENDPOINTS ============
+
+@app.route('/api/inverter/config', methods=['GET'])
+def get_device_config():
+    """
+    Device polls this endpoint for pending configuration updates.
+    Returns pending config if available, empty otherwise.
+    """
+    device_id = request.headers.get('Device-ID') or request.args.get('device_id') or 'EcoWatt001'
+    
+    pending = PENDING_CONFIGS.get(device_id)
+    if pending:
+        print(f"[CONFIG] Sending pending config to {device_id}: {pending}")
+        return jsonify(pending)
+    
+    # No pending config
+    return jsonify({})
+
+@app.route('/api/inverter/config/ack', methods=['POST'])
+def receive_config_ack():
+    """
+    Device sends acknowledgment after processing config update.
+    Format: {nonce, timestamp, all_success, config_ack: {accepted, rejected, unchanged}}
+    """
+    ack = request.get_json(force=True)
+    device_id = request.headers.get('Device-ID') or 'EcoWatt001'
+    
+    # Store acknowledgment
+    ack['device_id'] = device_id
+    ack['received_at'] = datetime.datetime.now().isoformat()
+    CONFIG_ACKS.append(ack)
+    
+    # Log to history
+    history_entry = {
+        'device_id': device_id,
+        'timestamp': ack['received_at'],
+        'nonce': ack.get('nonce'),
+        'all_success': ack.get('all_success'),
+        'accepted': ack.get('config_ack', {}).get('accepted', []),
+        'rejected': ack.get('config_ack', {}).get('rejected', []),
+        'unchanged': ack.get('config_ack', {}).get('unchanged', [])
+    }
+    CONFIG_HISTORY.append(history_entry)
+    
+    # Clear pending config if nonce matches
+    pending = PENDING_CONFIGS.get(device_id)
+    if pending and pending.get('nonce') == ack.get('nonce'):
+        PENDING_CONFIGS.pop(device_id)
+    
+    print(f"[CONFIG ACK] Received from {device_id}: all_success={ack.get('all_success')}")
+    print(f"[CONFIG ACK] Accepted: {len(history_entry['accepted'])}, Rejected: {len(history_entry['rejected'])}, Unchanged: {len(history_entry['unchanged'])}")
+    
+    return jsonify({'status': 'success', 'message': 'Acknowledgment received'})
+
+@app.route('/api/cloud/config/send', methods=['POST'])
+def send_config_update():
+    """
+    Cloud admin endpoint to send configuration update to device.
+    Request: {device_id, sampling_interval (seconds), registers: [list]}
+    """
+    req = request.get_json(force=True)
+    device_id = req.get('device_id', 'EcoWatt001')
+    sampling_interval = req.get('sampling_interval')
+    registers = req.get('registers', [])
+    
+    # Generate nonce
+    nonce = int(time.time() * 1000)
+    
+    # Build config update message
+    config_update = {}
+    if sampling_interval is not None:
+        config_update['sampling_interval'] = int(sampling_interval)
+    if registers:
+        config_update['registers'] = registers
+    
+    pending_config = {
+        'nonce': nonce,
+        'config_update': config_update
+    }
+    
+    # Store pending config for device
+    PENDING_CONFIGS[device_id] = pending_config
+    
+    print(f"[CONFIG] Queued config update for {device_id}: nonce={nonce}, interval={sampling_interval}s, registers={registers}")
+    
+    return jsonify({
+        'status': 'success',
+        'message': f'Configuration update queued for {device_id}',
+        'nonce': nonce,
+        'config': config_update
+    })
+
+@app.route('/api/cloud/config/history', methods=['GET'])
+def get_config_history():
+    """
+    Get configuration update history for dashboard/monitoring.
+    """
+    device_id = request.args.get('device_id')
+    
+    history = CONFIG_HISTORY
+    if device_id:
+        history = [h for h in CONFIG_HISTORY if h.get('device_id') == device_id]
+    
+    return jsonify({
+        'total': len(history),
+        'history': history[-50:]  # Last 50 entries
+    })
+
+# ============ COMMAND EXECUTION ENDPOINTS ============
+
+@app.route('/api/cloud/command/send', methods=['POST'])
+def send_command():
+    """
+    Cloud admin endpoint to send command to device.
+    Request: {device_id, action, target_register, value, encrypted (optional)}
+    """
+    req = request.get_json(force=True)
+    device_id = req.get('device_id', 'EcoWatt001')
+    action = req.get('action', 'write_register')
+    target_register = req.get('target_register')
+    value = req.get('value')
+    use_encryption = req.get('encrypted', False)
+    
+    # Generate nonce
+    nonce = int(time.time() * 1000)
+    
+    # Build command message
+    command_data = {
+        'action': action,
+        'target_register': target_register,
+        'value': value
+    }
+    
+    # Encrypt payload if requested
+    command_json = json.dumps(command_data)
+    if use_encryption:
+        encrypted_payload = encrypt_payload(command_json)
+        command = {
+            'nonce': nonce,
+            'encrypted': True,
+            'payload': encrypted_payload
+        }
+        log_security_event(device_id, 'command_encrypted', f'Command encrypted for nonce {nonce}')
+    else:
+        command = {
+            'nonce': nonce,
+            'command': command_data
+        }
+    
+    # Add HMAC for security
+    mac = hmac.new(PRE_SHARED_KEY, command_json.encode(), hashlib.sha256).hexdigest()
+    command['mac'] = mac
+    
+    # Store pending command
+    PENDING_COMMANDS[device_id] = command
+    
+    # Log to history
+    COMMAND_HISTORY.append({
+        'device_id': device_id,
+        'timestamp': datetime.datetime.now().isoformat(),
+        'nonce': nonce,
+        'action': action,
+        'target_register': target_register,
+        'value': value,
+        'status': 'pending',
+        'encrypted': use_encryption
+    })
+    
+    # Log command event
+    log_command_event(device_id, 'command_queued', 
+                     f'Action: {action}, Register: {target_register}, Value: {value}, Encrypted: {use_encryption}')
+    
+    print(f"[COMMAND] Queued command for {device_id}: {action} on {target_register} = {value} (encrypted={use_encryption})")
+    
+    return jsonify({
+        'status': 'success',
+        'message': f'Command queued for {device_id}',
+        'nonce': nonce,
+        'encrypted': use_encryption
+    })
+
+@app.route('/api/inverter/command', methods=['GET'])
+def get_pending_command():
+    """
+    Device polls this endpoint for pending commands.
+    """
+    device_id = request.headers.get('Device-ID') or request.args.get('device_id') or 'EcoWatt001'
+    
+    pending = PENDING_COMMANDS.get(device_id)
+    if pending:
+        print(f"[COMMAND] Sending pending command to {device_id}")
+        return jsonify(pending)
+    
+    return jsonify({})
+
+@app.route('/api/inverter/command/result', methods=['POST'])
+def receive_command_result():
+    """
+    Device sends command execution result.
+    Format: {nonce, command_result: {status, executed_at, modbus_response (optional)}}
+    """
+    result = request.get_json(force=True)
+    device_id = request.headers.get('Device-ID') or 'EcoWatt001'
+    
+    # Verify nonce (anti-replay)
+    nonce = result.get('nonce')
+    if nonce and not check_nonce(device_id, nonce):
+        log_security_event(device_id, 'replay_attack_command_result', f'Nonce: {nonce}')
+        return jsonify({'status': 'error', 'message': 'Invalid nonce (replay attack)'}), 403
+    
+    # Store result
+    result['device_id'] = device_id
+    result['received_at'] = datetime.datetime.now().isoformat()
+    COMMAND_RESULTS.append(result)
+    
+    # Extract command result details
+    cmd_result = result.get('command_result', {})
+    status = cmd_result.get('status', 'unknown')
+    executed_at = cmd_result.get('executed_at')
+    modbus_response = cmd_result.get('modbus_response', 'N/A')
+    modbus_frame = cmd_result.get('modbus_frame', 'N/A')
+    
+    # Update history
+    for entry in COMMAND_HISTORY:
+        if entry.get('device_id') == device_id and entry.get('nonce') == nonce:
+            entry['status'] = status
+            entry['executed_at'] = executed_at
+            entry['modbus_response'] = modbus_response
+            break
+    
+    # Log command execution details
+    log_command_event(device_id, f'command_result_{status}', 
+                     f'Nonce: {nonce}, Executed: {executed_at}, Modbus Response: {modbus_response}')
+    
+    # If Modbus frame is provided, log it
+    if modbus_frame != 'N/A':
+        log_command_event(device_id, 'modbus_frame_sent', f'Frame: {modbus_frame}')
+    
+    # Clear pending command if nonce matches
+    pending = PENDING_COMMANDS.get(device_id)
+    if pending and pending.get('nonce') == nonce:
+        PENDING_COMMANDS.pop(device_id)
+        log_command_event(device_id, 'command_completed', f'Nonce: {nonce}, Status: {status}')
+    
+    print(f"[COMMAND RESULT] Received from {device_id}: status={status}, modbus={modbus_response}")
+    
+    return jsonify({'status': 'success', 'message': 'Command result received'})
+
+@app.route('/api/cloud/command/history', methods=['GET'])
+def get_command_history():
+    """
+    Get command execution history.
+    """
+    device_id = request.args.get('device_id')
+    
+    history = COMMAND_HISTORY
+    if device_id:
+        history = [h for h in COMMAND_HISTORY if h.get('device_id') == device_id]
+    
+    return jsonify({
+        'total': len(history),
+        'history': history[-50:]
+    })
+
+# ============ FOTA ENDPOINTS ============
+
+@app.route('/api/cloud/fota/upload', methods=['POST'])
+def upload_firmware():
+    """
+    Cloud admin endpoint to upload firmware for OTA.
+    Request: {version, size, hash, chunk_size, firmware_data (base64)}
+    """
+    req = request.get_json(force=True)
+    
+    version = req.get('version')
+    size = req.get('size')
+    fw_hash = req.get('hash')
+    chunk_size = req.get('chunk_size', 1024)
+    firmware_data_b64 = req.get('firmware_data')
+    
+    if not all([version, size, fw_hash, firmware_data_b64]):
+        log_fota_event('cloud', 'upload_failed', 'Missing required fields')
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Decode firmware data
+    try:
+        firmware_data = base64.b64decode(firmware_data_b64)
+        log_fota_event('cloud', 'firmware_decoded', f'Size: {len(firmware_data)} bytes')
+    except Exception as e:
+        log_fota_event('cloud', 'upload_failed', f'Invalid base64: {e}')
+        return jsonify({'error': f'Invalid base64: {e}'}), 400
+    
+    # Verify hash
+    calculated_hash = hashlib.sha256(firmware_data).hexdigest()
+    if calculated_hash != fw_hash:
+        log_fota_event('cloud', 'upload_failed', f'Hash mismatch: expected {fw_hash}, got {calculated_hash}')
+        return jsonify({'error': 'Hash mismatch'}), 400
+    
+    log_fota_event('cloud', 'firmware_hash_verified', f'Hash: {fw_hash}')
+    
+    # Create manifest
+    global FIRMWARE_MANIFEST
+    FIRMWARE_MANIFEST = {
+        'version': version,
+        'size': size,
+        'hash': fw_hash,
+        'chunk_size': chunk_size,
+        'uploaded_at': datetime.datetime.now().isoformat()
+    }
+    
+    # Split into chunks
+    FIRMWARE_CHUNKS.clear()
+    num_chunks = (len(firmware_data) + chunk_size - 1) // chunk_size
+    
+    log_fota_event('cloud', 'chunking_started', f'Creating {num_chunks} chunks of {chunk_size} bytes')
+    
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = min(start + chunk_size, len(firmware_data))
+        chunk_data = firmware_data[start:end]
+        chunk_b64 = base64.b64encode(chunk_data).decode('ascii')
+        
+        # Generate HMAC for chunk
+        mac = hmac.new(PRE_SHARED_KEY, chunk_data, hashlib.sha256).hexdigest()
+        
+        FIRMWARE_CHUNKS[i] = {
+            'chunk_number': i,
+            'data': chunk_b64,
+            'mac': mac,
+            'size': len(chunk_data)
+        }
+    
+    log_fota_event('cloud', 'firmware_uploaded', 
+                  f'Version: {version}, Size: {size} bytes, Chunks: {num_chunks}, Hash: {fw_hash}')
+    
+    print(f"[FOTA] Firmware uploaded: version={version}, size={size}, chunks={num_chunks}")
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Firmware uploaded and chunked',
+        'manifest': FIRMWARE_MANIFEST,
+        'total_chunks': num_chunks
+    })
+
+@app.route('/api/inverter/fota/manifest', methods=['GET'])
+def get_fota_manifest():
+    """
+    Device polls for FOTA manifest.
+    """
+    if FIRMWARE_MANIFEST:
+        return jsonify({'fota': {'manifest': FIRMWARE_MANIFEST}})
+    return jsonify({})
+
+@app.route('/api/inverter/fota/chunk', methods=['GET'])
+def get_fota_chunk():
+    """
+    Device requests specific firmware chunk.
+    Query: chunk_number
+    """
+    chunk_num = int(request.args.get('chunk_number', 0))
+    
+    chunk = FIRMWARE_CHUNKS.get(chunk_num)
+    if chunk:
+        return jsonify(chunk)
+    
+    return jsonify({'error': 'Chunk not found'}), 404
+
+@app.route('/api/inverter/fota/status', methods=['POST'])
+def receive_fota_status():
+    """
+    Device sends FOTA status/acknowledgment.
+    Format: {fota_status: {chunk_received, verified, boot_status, rollback, error}}
+    """
+    status = request.get_json(force=True)
+    device_id = request.headers.get('Device-ID') or 'EcoWatt001'
+    
+    fota_status = status.get('fota_status', {})
+    chunk_received = fota_status.get('chunk_received')
+    verified = fota_status.get('verified')
+    boot_status = fota_status.get('boot_status')
+    rollback = fota_status.get('rollback', False)
+    error = fota_status.get('error')
+    
+    # Update device FOTA status
+    FOTA_STATUS[device_id] = {
+        'chunk_received': chunk_received,
+        'verified': verified,
+        'boot_status': boot_status,
+        'rollback': rollback,
+        'error': error,
+        'last_update': datetime.datetime.now().isoformat()
+    }
+    
+    # Log FOTA events based on status
+    if chunk_received is not None:
+        total_chunks = len(FIRMWARE_CHUNKS)
+        progress = (chunk_received + 1) / total_chunks * 100 if total_chunks > 0 else 0
+        log_fota_event(device_id, 'chunk_received', 
+                      f'Chunk {chunk_received}/{total_chunks} ({progress:.1f}%)')
+    
+    if verified is not None:
+        if verified:
+            log_fota_event(device_id, 'firmware_verified', 'Hash verification successful')
+        else:
+            log_fota_event(device_id, 'verification_failed', f'Error: {error}')
+    
+    if rollback:
+        log_fota_event(device_id, 'rollback_triggered', f'Reason: {error or "Verification/Boot failure"}')
+        log_security_event(device_id, 'fota_rollback', f'Rolled back due to: {error}')
+    
+    if boot_status:
+        log_fota_event(device_id, 'boot_status', f'Status: {boot_status}')
+        if boot_status == 'success':
+            log_fota_event(device_id, 'fota_completed', f'New firmware booted successfully')
+        elif boot_status == 'failed':
+            log_fota_event(device_id, 'boot_failed', f'Boot failed, rollback initiated')
+    
+    print(f"[FOTA STATUS] Device {device_id}: chunk {chunk_received}, verified={verified}, boot={boot_status}, rollback={rollback}")
+    
+    return jsonify({'status': 'success'})
+
+@app.route('/api/cloud/fota/status', methods=['GET'])
+def get_fota_status():
+    """
+    Get FOTA status for all devices.
+    """
+    return jsonify({
+        'manifest': FIRMWARE_MANIFEST,
+        'total_chunks': len(FIRMWARE_CHUNKS),
+        'device_status': FOTA_STATUS
+    })
+
+# ============ LOGGING ENDPOINTS ============
+
+@app.route('/api/cloud/logs/security', methods=['GET'])
+def get_security_logs():
+    """
+    Get security logs (HMAC failures, replay attacks, etc.)
+    """
+    device_id = request.args.get('device_id')
+    limit = int(request.args.get('limit', 100))
+    
+    logs = SECURITY_LOGS
+    if device_id:
+        logs = [log for log in logs if log.get('device_id') == device_id]
+    
+    return jsonify({
+        'total': len(logs),
+        'logs': logs[-limit:]
+    })
+
+@app.route('/api/cloud/logs/fota', methods=['GET'])
+def get_fota_logs():
+    """
+    Get FOTA operation logs (upload, download, verify, rollback)
+    """
+    device_id = request.args.get('device_id')
+    limit = int(request.args.get('limit', 100))
+    
+    logs = FOTA_LOGS
+    if device_id:
+        logs = [log for log in logs if log.get('device_id') == device_id]
+    
+    return jsonify({
+        'total': len(logs),
+        'logs': logs[-limit:]
+    })
+
+@app.route('/api/cloud/logs/commands', methods=['GET'])
+def get_command_logs():
+    """
+    Get command execution logs (detailed Modbus forwarding)
+    """
+    device_id = request.args.get('device_id')
+    limit = int(request.args.get('limit', 100))
+    
+    logs = COMMAND_LOGS
+    if device_id:
+        logs = [log for log in logs if log.get('device_id') == device_id]
+    
+    return jsonify({
+        'total': len(logs),
+        'logs': logs[-limit:]
+    })
+
+@app.route('/api/cloud/logs/all', methods=['GET'])
+def get_all_logs():
+    """
+    Get all logs for monitoring dashboard.
+    """
+    return jsonify({
+        'security': {
+            'total': len(SECURITY_LOGS),
+            'recent': SECURITY_LOGS[-20:]
+        },
+        'fota': {
+            'total': len(FOTA_LOGS),
+            'recent': FOTA_LOGS[-20:]
+        },
+        'commands': {
+            'total': len(COMMAND_LOGS),
+            'recent': COMMAND_LOGS[-20:]
+        }
+    })
+
+# ============ UNIFIED DEVICE COMMUNICATION ENDPOINT ============
+
+@app.route('/api/device/status', methods=['POST'])
+def device_status():
+    """
+    Unified endpoint for device status + receiving config/command/fota.
+    Device sends: {device_id, status}
+    Cloud responds with pending config, commands, FOTA info.
+    """
+    req = request.get_json(force=True)
+    device_id = req.get('device_id', 'EcoWatt001')
+    status = req.get('status', 'ready')
+    
+    response = {}
+    
+    # Check for pending config
+    if device_id in PENDING_CONFIGS:
+        response['config_update'] = PENDING_CONFIGS[device_id]
+    
+    # Check for pending command
+    if device_id in PENDING_COMMANDS:
+        response['command'] = PENDING_COMMANDS[device_id]
+    
+    # Check for FOTA
+    if FIRMWARE_MANIFEST:
+        # Determine next chunk to send
+        device_fota = FOTA_STATUS.get(device_id, {})
+        last_chunk = device_fota.get('chunk_received', -1)
+        next_chunk = last_chunk + 1
+        
+        if next_chunk < len(FIRMWARE_CHUNKS):
+            response['fota'] = {
+                'manifest': FIRMWARE_MANIFEST,
+                'next_chunk': next_chunk
+            }
+    
+    return jsonify(response)
+
+# ============ SECURITY HELPERS ============
+
+def encrypt_payload(plaintext: str) -> str:
+    """Encrypt payload using AES-256-CBC."""
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import pad
+        import os
+        
+        iv = os.urandom(16)  # Random IV
+        cipher = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+        padded = pad(plaintext.encode('utf-8'), AES.block_size)
+        ciphertext = cipher.encrypt(padded)
+        
+        # Return IV + ciphertext as base64
+        encrypted = base64.b64encode(iv + ciphertext).decode('ascii')
+        return encrypted
+    except ImportError:
+        # Fallback: no encryption if pycryptodome not installed
+        print("[WARNING] pycryptodome not installed, encryption disabled")
+        return base64.b64encode(plaintext.encode('utf-8')).decode('ascii')
+
+def decrypt_payload(encrypted: str) -> str:
+    """Decrypt payload using AES-256-CBC."""
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import unpad
+        
+        data = base64.b64decode(encrypted)
+        iv = data[:16]
+        ciphertext = data[16:]
+        
+        cipher = AES.new(ENCRYPTION_KEY, AES.MODE_CBC, iv)
+        padded = cipher.decrypt(ciphertext)
+        plaintext = unpad(padded, AES.block_size).decode('utf-8')
+        return plaintext
+    except ImportError:
+        # Fallback: just base64 decode
+        return base64.b64decode(encrypted).decode('utf-8')
+
+def verify_hmac(payload, received_mac):
+    """Verify HMAC signature."""
+    calculated_mac = hmac.new(PRE_SHARED_KEY, json.dumps(payload).encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(calculated_mac, received_mac)
+
+def check_nonce(device_id, nonce):
+    """Check nonce for anti-replay protection."""
+    last_nonce = NONCE_STORE.get(device_id, 0)
+    if nonce <= last_nonce:
+        # Log security event
+        log_security_event(device_id, 'replay_attack', f'Nonce {nonce} <= {last_nonce}')
+        return False  # Replay attack
+    NONCE_STORE[device_id] = nonce
+    return True
+
+def log_security_event(device_id, event_type, details):
+    """Log security events."""
+    SECURITY_LOGS.append({
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device_id': device_id,
+        'event_type': event_type,
+        'details': details
+    })
+    print(f"[SECURITY] {device_id}: {event_type} - {details}")
+
+def log_fota_event(device_id, event_type, details):
+    """Log FOTA events."""
+    FOTA_LOGS.append({
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device_id': device_id,
+        'event_type': event_type,
+        'details': details
+    })
+    print(f"[FOTA] {device_id}: {event_type} - {details}")
+
+def log_command_event(device_id, event_type, details):
+    """Log command execution events."""
+    COMMAND_LOGS.append({
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device_id': device_id,
+        'event_type': event_type,
+        'details': details
+    })
+    print(f"[COMMAND] {device_id}: {event_type} - {details}")
 
 # ---------------- Startup ----------------
 
