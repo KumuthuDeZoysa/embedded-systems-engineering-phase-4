@@ -4,7 +4,7 @@
         "type": "tab",
         "label": "EcoWatt Cloud Gateway",
         "disabled": false,
-        "info": "EcoWatt UI wired to Flask /api/uploads (actual parsed samples)\n- /dashboard: Recent uploads grouped by device (expandable uploads) + recent benchmarks with min/avg/max\n- /benchmarks: separate component for benchmark table + chart\n- /api/data: HTML/JSON/CSV data viewer\n- /api/flask_push: receiver for Flask -> Node-RED push payloads (stored in global.flask_pushes)"
+        "info": "EcoWatt UI wired to Flask /api/uploads (actual parsed samples)\n- /dashboard: Recent uploads grouped by device (expandable uploads) + recent benchmarks with min/avg/max\n- /benchmarks: separate component for benchmark table + chart\n- /api/data: HTML/JSON/CSV data viewer\n- /api/flask_push: receiver for Flask -> Node-RED push payloads (stored in global.flask_pushes)\n- /config: Configuration management dashboard\n- /commands: Command execution dashboard\n- /fota: Firmware OTA dashboard"
     },
     {
         "id": "59c98c114831c822",
@@ -268,6 +268,183 @@
         "headers": {},
         "x": 690,
         "y": 340,
+        "wires": []
+    },
+    {
+        "id": "config001",
+        "type": "http in",
+        "z": "02823894daf27bbe",
+        "name": "Config Dashboard",
+        "url": "/config",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 140,
+        "y": 420,
+        "wires": [["config002"]]
+    },
+    {
+        "id": "config002",
+        "type": "http request",
+        "z": "02823894daf27bbe",
+        "name": "GET Config History",
+        "method": "GET",
+        "ret": "obj",
+        "url": "http://localhost:8080/api/cloud/config/history",
+        "x": 380,
+        "y": 420,
+        "wires": [["config003"]]
+    },
+    {
+        "id": "config003",
+        "type": "function",
+        "z": "02823894daf27bbe",
+        "name": "Config Dashboard HTML",
+        "func": "const history = msg.payload.history || [];\nconst total = msg.payload.total || 0;\n\nconst historyRows = history.slice().reverse().map(h => {\n  const accepted = h.accepted || [];\n  const rejected = h.rejected || [];\n  const unchanged = h.unchanged || [];\n  const status = h.all_success ? '✅ Success' : '⚠️ Partial';\n  const statusColor = h.all_success ? '#27ae60' : '#f39c12';\n  \n  return '<tr>' +\n    '<td>' + new Date(h.timestamp).toLocaleString() + '</td>' +\n    '<td><strong>' + h.device_id + '</strong></td>' +\n    '<td>' + (h.nonce || 'N/A') + '</td>' +\n    '<td style=\"color:' + statusColor + ';font-weight:bold;\">' + status + '</td>' +\n    '<td>' + accepted.length + '</td>' +\n    '<td>' + rejected.length + '</td>' +\n    '<td>' + unchanged.length + '</td>' +\n    '<td><button onclick=\"showDetails(\\'' + h.nonce + '\\')\" >Details</button></td>' +\n  '</tr>';\n}).join('');\n\nmsg.payload = `<!DOCTYPE html>\n<html>\n<head>\n  <title>Configuration Management - EcoWatt Cloud</title>\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <meta http-equiv=\"refresh\" content=\"30\">\n  <style>\n    * { margin:0; padding:0; box-sizing:border-box; }\n    body { font-family:'Segoe UI',Arial,sans-serif; background:#f5f7fa; }\n    .header { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:#fff; padding:26px 18px; text-align:center; }\n    .container { max-width:1400px; margin:0 auto; padding:16px; }\n    .nav a { color:#667eea; text-decoration:none; border:1px solid #667eea; border-radius:8px; padding:6px 10px; margin-right:8px; }\n    .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:16px; margin-bottom:16px; }\n    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:12px; }\n    .form-group label { display:block; margin-bottom:4px; font-weight:600; color:#34495e; }\n    .form-group input, .form-group select { width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; }\n    button { background:#667eea; color:#fff; padding:10px 20px; border:0; border-radius:6px; cursor:pointer; font-size:1em; }\n    button:hover { background:#5568d3; }\n    table { width:100%; border-collapse:collapse; }\n    th { background:#34495e; color:#fff; padding:10px; text-align:left; }\n    td { padding:10px; border-bottom:1px solid #ecf0f1; }\n    .register-select { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; }\n    .register-select label { display:flex; align-items:center; gap:6px; padding:6px; background:#f8f9fa; border-radius:4px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>⚙️ Configuration Management</h1>\n    <p>Runtime device configuration updates</p>\n  </div>\n  <div class=\"container\">\n    <div class=\"nav\" style=\"margin:10px 0 14px 0;\">\n      <a href=\"/dashboard\">🏠 Dashboard</a>\n      <a href=\"/config\">⚙️ Config</a>\n      <a href=\"/commands\">📡 Commands</a>\n      <a href=\"/fota\">🔄 FOTA</a>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Send Configuration Update</h2>\n      <form id=\"configForm\">\n        <div class=\"form-grid\">\n          <div class=\"form-group\">\n            <label>Device ID:</label>\n            <input type=\"text\" name=\"device_id\" value=\"EcoWatt001\" required>\n          </div>\n          <div class=\"form-group\">\n            <label>Sampling Interval (seconds):</label>\n            <input type=\"number\" name=\"sampling_interval\" min=\"1\" max=\"300\" value=\"5\" required>\n          </div>\n        </div>\n        <div class=\"form-group\">\n          <label>Registers to Monitor:</label>\n          <div class=\"register-select\">\n            <label><input type=\"checkbox\" name=\"registers\" value=\"0\" checked> Voltage (Reg 0)</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"1\" checked> Current (Reg 1)</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"2\" checked> Frequency (Reg 2)</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"3\" checked> PV1 Voltage</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"4\" checked> PV2 Voltage</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"5\" checked> PV1 Current</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"6\" checked> PV2 Current</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"7\" checked> Temperature</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"8\" checked> Export Power %</label>\n            <label><input type=\"checkbox\" name=\"registers\" value=\"9\" checked> Output Power</label>\n          </div>\n        </div>\n        <button type=\"submit\">📤 Send Configuration</button>\n      </form>\n      <div id=\"sendResult\" style=\"margin-top:12px;\"></div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Configuration History (${total} total)</h2>\n      <table>\n        <thead>\n          <tr>\n            <th>Timestamp</th>\n            <th>Device</th>\n            <th>Nonce</th>\n            <th>Status</th>\n            <th>Accepted</th>\n            <th>Rejected</th>\n            <th>Unchanged</th>\n            <th>Actions</th>\n          </tr>\n        </thead>\n        <tbody>\n          ${historyRows || '<tr><td colspan=\"8\" style=\"text-align:center;color:#7f8c8d;\">No configuration history</td></tr>'}\n        </tbody>\n      </table>\n    </div>\n  </div>\n  \n  <script>\n    document.getElementById('configForm').addEventListener('submit', async (e) => {\n      e.preventDefault();\n      const formData = new FormData(e.target);\n      const registers = Array.from(formData.getAll('registers')).map(Number);\n      \n      const payload = {\n        device_id: formData.get('device_id'),\n        sampling_interval: parseInt(formData.get('sampling_interval')),\n        registers: registers\n      };\n      \n      try {\n        const resp = await fetch('http://localhost:8080/api/cloud/config/send', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(payload)\n        });\n        const result = await resp.json();\n        document.getElementById('sendResult').innerHTML = \n          `<div style=\"padding:12px;background:#d4edda;border:1px solid #c3e6cb;border-radius:6px;color:#155724;\">\n            ✅ Configuration queued! Nonce: ${result.nonce}\n          </div>`;\n        setTimeout(() => location.reload(), 2000);\n      } catch(err) {\n        document.getElementById('sendResult').innerHTML = \n          `<div style=\"padding:12px;background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;color:#721c24;\">\n            ❌ Error: ${err.message}\n          </div>`;\n      }\n    });\n    \n    function showDetails(nonce) {\n      alert('Config details for nonce: ' + nonce);\n    }\n  </script>\n</body>\n</html>`;\n\nmsg.headers = { 'Content-Type': 'text/html' };\nreturn msg;",
+        "outputs": 1,
+        "x": 680,
+        "y": 420,
+        "wires": [["config004"]]
+    },
+    {
+        "id": "config004",
+        "type": "http response",
+        "z": "02823894daf27bbe",
+        "name": "Config Response",
+        "x": 950,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "cmd001",
+        "type": "http in",
+        "z": "02823894daf27bbe",
+        "name": "Commands Dashboard",
+        "url": "/commands",
+        "method": "get",
+        "upload": false,
+        "x": 150,
+        "y": 500,
+        "wires": [["cmd002"]]
+    },
+    {
+        "id": "cmd002",
+        "type": "http request",
+        "z": "02823894daf27bbe",
+        "name": "GET Command History",
+        "method": "GET",
+        "ret": "obj",
+        "url": "http://localhost:8080/api/cloud/command/history",
+        "x": 390,
+        "y": 500,
+        "wires": [["cmd003"]]
+    },
+    {
+        "id": "cmd003",
+        "type": "function",
+        "z": "02823894daf27bbe",
+        "name": "Commands Dashboard HTML",
+        "func": "const history = msg.payload.history || [];\nconst total = msg.payload.total || 0;\n\nconst historyRows = history.slice().reverse().map(h => {\n  const statusColor = h.status === 'success' ? '#27ae60' : (h.status === 'pending' ? '#f39c12' : '#e74c3c');\n  const statusIcon = h.status === 'success' ? '✅' : (h.status === 'pending' ? '⏳' : '❌');\n  \n  return '<tr>' +\n    '<td>' + new Date(h.timestamp).toLocaleString() + '</td>' +\n    '<td><strong>' + h.device_id + '</strong></td>' +\n    '<td>' + h.action + '</td>' +\n    '<td>' + h.target_register + '</td>' +\n    '<td>' + h.value + '</td>' +\n    '<td style=\"color:' + statusColor + ';font-weight:bold;\">' + statusIcon + ' ' + h.status + '</td>' +\n    '<td>' + (h.executed_at ? new Date(h.executed_at).toLocaleString() : 'N/A') + '</td>' +\n  '</tr>';\n}).join('');\n\nmsg.payload = `<!DOCTYPE html>\n<html>\n<head>\n  <title>Command Execution - EcoWatt Cloud</title>\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <meta http-equiv=\"refresh\" content=\"30\">\n  <style>\n    * { margin:0; padding:0; box-sizing:border-box; }\n    body { font-family:'Segoe UI',Arial,sans-serif; background:#f5f7fa; }\n    .header { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:#fff; padding:26px 18px; text-align:center; }\n    .container { max-width:1400px; margin:0 auto; padding:16px; }\n    .nav a { color:#667eea; text-decoration:none; border:1px solid #667eea; border-radius:8px; padding:6px 10px; margin-right:8px; }\n    .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:16px; margin-bottom:16px; }\n    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:12px; }\n    .form-group label { display:block; margin-bottom:4px; font-weight:600; color:#34495e; }\n    .form-group input, .form-group select { width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; }\n    button { background:#667eea; color:#fff; padding:10px 20px; border:0; border-radius:6px; cursor:pointer; font-size:1em; }\n    button:hover { background:#5568d3; }\n    table { width:100%; border-collapse:collapse; }\n    th { background:#34495e; color:#fff; padding:10px; text-align:left; }\n    td { padding:10px; border-bottom:1px solid #ecf0f1; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>📡 Command Execution</h1>\n    <p>Send commands to devices</p>\n  </div>\n  <div class=\"container\">\n    <div class=\"nav\" style=\"margin:10px 0 14px 0;\">\n      <a href=\"/dashboard\">🏠 Dashboard</a>\n      <a href=\"/config\">⚙️ Config</a>\n      <a href=\"/commands\">📡 Commands</a>\n      <a href=\"/fota\">🔄 FOTA</a>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Send Command</h2>\n      <form id=\"commandForm\">\n        <div class=\"form-grid\">\n          <div class=\"form-group\">\n            <label>Device ID:</label>\n            <input type=\"text\" name=\"device_id\" value=\"EcoWatt001\" required>\n          </div>\n          <div class=\"form-group\">\n            <label>Action:</label>\n            <select name=\"action\">\n              <option value=\"write_register\">Write Register</option>\n            </select>\n          </div>\n          <div class=\"form-group\">\n            <label>Target Register:</label>\n            <select name=\"target_register\">\n              <option value=\"8\">Export Power % (Reg 8)</option>\n              <option value=\"0\">Voltage (Reg 0)</option>\n              <option value=\"1\">Current (Reg 1)</option>\n            </select>\n          </div>\n          <div class=\"form-group\">\n            <label>Value:</label>\n            <input type=\"number\" name=\"value\" min=\"0\" max=\"100\" value=\"50\" required>\n          </div>\n        </div>\n        <button type=\"submit\">📤 Send Command</button>\n      </form>\n      <div id=\"sendResult\" style=\"margin-top:12px;\"></div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Command History (${total} total)</h2>\n      <table>\n        <thead>\n          <tr>\n            <th>Queued At</th>\n            <th>Device</th>\n            <th>Action</th>\n            <th>Register</th>\n            <th>Value</th>\n            <th>Status</th>\n            <th>Executed At</th>\n          </tr>\n        </thead>\n        <tbody>\n          ${historyRows || '<tr><td colspan=\"7\" style=\"text-align:center;color:#7f8c8d;\">No command history</td></tr>'}\n        </tbody>\n      </table>\n    </div>\n  </div>\n  \n  <script>\n    document.getElementById('commandForm').addEventListener('submit', async (e) => {\n      e.preventDefault();\n      const formData = new FormData(e.target);\n      \n      const payload = {\n        device_id: formData.get('device_id'),\n        action: formData.get('action'),\n        target_register: formData.get('target_register'),\n        value: parseFloat(formData.get('value'))\n      };\n      \n      try {\n        const resp = await fetch('http://localhost:8080/api/cloud/command/send', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(payload)\n        });\n        const result = await resp.json();\n        document.getElementById('sendResult').innerHTML = \n          `<div style=\"padding:12px;background:#d4edda;border:1px solid #c3e6cb;border-radius:6px;color:#155724;\">\n            ✅ Command queued! Nonce: ${result.nonce}\n          </div>`;\n        setTimeout(() => location.reload(), 2000);\n      } catch(err) {\n        document.getElementById('sendResult').innerHTML = \n          `<div style=\"padding:12px;background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;color:#721c24;\">\n            ❌ Error: ${err.message}\n          </div>`;\n      }\n    });\n  </script>\n</body>\n</html>`;\n\nmsg.headers = { 'Content-Type': 'text/html' };\nreturn msg;",
+        "outputs": 1,
+        "x": 680,
+        "y": 500,
+        "wires": [["cmd004"]]
+    },
+    {
+        "id": "cmd004",
+        "type": "http response",
+        "z": "02823894daf27bbe",
+        "name": "Commands Response",
+        "x": 950,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "fota001",
+        "type": "http in",
+        "z": "02823894daf27bbe",
+        "name": "FOTA Dashboard",
+        "url": "/fota",
+        "method": "get",
+        "upload": false,
+        "x": 140,
+        "y": 580,
+        "wires": [["fota002"]]
+    },
+    {
+        "id": "fota002",
+        "type": "http request",
+        "z": "02823894daf27bbe",
+        "name": "GET FOTA Status",
+        "method": "GET",
+        "ret": "obj",
+        "url": "http://localhost:8080/api/cloud/fota/status",
+        "x": 370,
+        "y": 580,
+        "wires": [["fota003"]]
+    },
+    {
+        "id": "fota003",
+        "type": "function",
+        "z": "02823894daf27bbe",
+        "name": "FOTA Dashboard HTML",
+        "func": "const manifest = msg.payload.manifest || null;\nconst totalChunks = msg.payload.total_chunks || 0;\nconst deviceStatus = msg.payload.device_status || {};\n\nlet manifestHtml = '';\nif (manifest) {\n  manifestHtml = '<div style=\"background:#e8f5e9;padding:12px;border-radius:6px;margin-bottom:12px;\">' +\n    '<h3>📦 Current Firmware Manifest</h3>' +\n    '<div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px;\">' +\n      '<div><strong>Version:</strong> ' + manifest.version + '</div>' +\n      '<div><strong>Size:</strong> ' + manifest.size + ' bytes</div>' +\n      '<div><strong>Hash:</strong> ' + manifest.hash.substring(0,16) + '...</div>' +\n      '<div><strong>Chunk Size:</strong> ' + manifest.chunk_size + ' bytes</div>' +\n      '<div><strong>Total Chunks:</strong> ' + totalChunks + '</div>' +\n    '</div>' +\n  '</div>';\n} else {\n  manifestHtml = '<div style=\"padding:12px;background:#fff3cd;border-radius:6px;margin-bottom:12px;\">⚠️ No firmware uploaded yet</div>';\n}\n\nconst deviceRows = Object.entries(deviceStatus).map(([deviceId, status]) => {\n  const progress = totalChunks > 0 ? ((status.chunk_received + 1) / totalChunks * 100).toFixed(1) : 0;\n  const verifiedIcon = status.verified ? '✅' : '❌';\n  const verifiedText = status.verified ? 'Verified' : 'Not Verified';\n  \n  return '<tr>' +\n    '<td><strong>' + deviceId + '</strong></td>' +\n    '<td>' + (status.chunk_received + 1) + ' / ' + totalChunks + '</td>' +\n    '<td>' +\n      '<div style=\"background:#ecf0f1;border-radius:8px;height:20px;overflow:hidden;\">' +\n        '<div style=\"background:#667eea;height:100%;width:' + progress + '%;\"></div>' +\n      '</div>' +\n      '<span style=\"font-size:0.9em;color:#7f8c8d;\">' + progress + '%</span>' +\n    '</td>' +\n    '<td>' + verifiedIcon + ' ' + verifiedText + '</td>' +\n    '<td>' + new Date(status.last_update).toLocaleString() + '</td>' +\n  '</tr>';\n}).join('');\n\nmsg.payload = `<!DOCTYPE html>\n<html>\n<head>\n  <title>FOTA Management - EcoWatt Cloud</title>\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <meta http-equiv=\"refresh\" content=\"30\">\n  <style>\n    * { margin:0; padding:0; box-sizing:border-box; }\n    body { font-family:'Segoe UI',Arial,sans-serif; background:#f5f7fa; }\n    .header { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:#fff; padding:26px 18px; text-align:center; }\n    .container { max-width:1400px; margin:0 auto; padding:16px; }\n    .nav a { color:#667eea; text-decoration:none; border:1px solid #667eea; border-radius:8px; padding:6px 10px; margin-right:8px; }\n    .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:16px; margin-bottom:16px; }\n    .form-group label { display:block; margin-bottom:4px; font-weight:600; color:#34495e; }\n    .form-group input { width:100%; padding:8px; border:1px solid #ddd; border-radius:6px; margin-bottom:12px; }\n    button { background:#667eea; color:#fff; padding:10px 20px; border:0; border-radius:6px; cursor:pointer; font-size:1em; }\n    button:hover { background:#5568d3; }\n    table { width:100%; border-collapse:collapse; }\n    th { background:#34495e; color:#fff; padding:10px; text-align:left; }\n    td { padding:10px; border-bottom:1px solid #ecf0f1; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>🔄 Firmware Over-The-Air (FOTA)</h1>\n    <p>Manage firmware updates</p>\n  </div>\n  <div class=\"container\">\n    <div class=\"nav\" style=\"margin:10px 0 14px 0;\">\n      <a href=\"/dashboard\">🏠 Dashboard</a>\n      <a href=\"/config\">⚙️ Config</a>\n      <a href=\"/commands\">📡 Commands</a>\n      <a href=\"/fota\">🔄 FOTA</a>\n    </div>\n    \n    <div class=\"card\">\n      ${manifestHtml}\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Upload Firmware</h2>\n      <form id=\"fotaForm\">\n        <div class=\"form-group\">\n          <label>Version:</label>\n          <input type=\"text\" name=\"version\" placeholder=\"e.g., 1.0.3\" required>\n        </div>\n        <div class=\"form-group\">\n          <label>Firmware File:</label>\n          <input type=\"file\" name=\"firmware_file\" accept=\".bin\" required>\n        </div>\n        <div class=\"form-group\">\n          <label>Chunk Size (bytes):</label>\n          <input type=\"number\" name=\"chunk_size\" value=\"1024\" min=\"256\" max=\"4096\">\n        </div>\n        <button type=\"submit\">📤 Upload Firmware</button>\n      </form>\n      <div id=\"uploadResult\" style=\"margin-top:12px;\"></div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">Device Update Status</h2>\n      <table>\n        <thead>\n          <tr>\n            <th>Device ID</th>\n            <th>Chunks Received</th>\n            <th>Progress</th>\n            <th>Verified</th>\n            <th>Last Update</th>\n          </tr>\n        </thead>\n        <tbody>\n          ${deviceRows || '<tr><td colspan=\"5\" style=\"text-align:center;color:#7f8c8d;\">No devices receiving updates</td></tr>'}\n        </tbody>\n      </table>\n    </div>\n  </div>\n  \n  <script>\n    document.getElementById('fotaForm').addEventListener('submit', async (e) => {\n      e.preventDefault();\n      const formData = new FormData(e.target);\n      const file = formData.get('firmware_file');\n      \n      if (!file) {\n        alert('Please select a firmware file');\n        return;\n      }\n      \n      // Read file as ArrayBuffer\n      const arrayBuffer = await file.arrayBuffer();\n      const uint8Array = new Uint8Array(arrayBuffer);\n      \n      // Calculate SHA-256 hash\n      const hashBuffer = await crypto.subtle.digest('SHA-256', uint8Array);\n      const hashArray = Array.from(new Uint8Array(hashBuffer));\n      const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');\n      \n      // Convert to base64\n      const base64 = btoa(String.fromCharCode.apply(null, uint8Array));\n      \n      const payload = {\n        version: formData.get('version'),\n        size: uint8Array.length,\n        hash: hash,\n        chunk_size: parseInt(formData.get('chunk_size')),\n        firmware_data: base64\n      };\n      \n      document.getElementById('uploadResult').innerHTML = '<div style=\"padding:12px;background:#fff3cd;border-radius:6px;\">⏳ Uploading firmware...</div>';\n      \n      try {\n        const resp = await fetch('http://localhost:8080/api/cloud/fota/upload', {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify(payload)\n        });\n        const result = await resp.json();\n        \n        if (result.status === 'success') {\n          document.getElementById('uploadResult').innerHTML = \n            `<div style=\"padding:12px;background:#d4edda;border:1px solid #c3e6cb;border-radius:6px;color:#155724;\">\n              ✅ Firmware uploaded! Version: ${result.manifest.version}, Chunks: ${result.total_chunks}\n            </div>`;\n          setTimeout(() => location.reload(), 2000);\n        } else {\n          throw new Error(result.error || 'Upload failed');\n        }\n      } catch(err) {\n        document.getElementById('uploadResult').innerHTML = \n          `<div style=\"padding:12px;background:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;color:#721c24;\">\n            ❌ Error: ${err.message}\n          </div>`;\n      }\n    });\n  </script>\n</body>\n</html>`;\n\nmsg.headers = { 'Content-Type': 'text/html' };\nreturn msg;",
+        "outputs": 1,
+        "x": 660,
+        "y": 580,
+        "wires": [["fota004"]]
+    },
+    {
+        "id": "fota004",
+        "type": "http response",
+        "z": "02823894daf27bbe",
+        "name": "FOTA Response",
+        "x": 930,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "logs001",
+        "type": "http in",
+        "z": "02823894daf27bbe",
+        "name": "Logs Dashboard",
+        "url": "/logs",
+        "method": "get",
+        "upload": false,
+        "x": 140,
+        "y": 660,
+        "wires": [["logs002"]]
+    },
+    {
+        "id": "logs002",
+        "type": "http request",
+        "z": "02823894daf27bbe",
+        "name": "GET All Logs",
+        "method": "GET",
+        "ret": "obj",
+        "url": "http://localhost:8080/api/cloud/logs/all",
+        "x": 350,
+        "y": 660,
+        "wires": [["logs003"]]
+    },
+    {
+        "id": "logs003",
+        "type": "function",
+        "z": "02823894daf27bbe",
+        "name": "Logs Dashboard HTML",
+        "func": "const security = msg.payload.security || {total: 0, recent: []};\nconst fota = msg.payload.fota || {total: 0, recent: []};\nconst commands = msg.payload.commands || {total: 0, recent: []};\n\nconst securityRows = security.recent.slice().reverse().map(log => {\n  const color = log.event_type.includes('attack') || log.event_type.includes('failed') ? '#e74c3c' : '#f39c12';\n  return '<tr>' +\n    '<td>' + new Date(log.timestamp).toLocaleString() + '</td>' +\n    '<td><strong>' + log.device_id + '</strong></td>' +\n    '<td style=\"color:' + color + ';font-weight:bold;\">' + log.event_type + '</td>' +\n    '<td>' + log.details + '</td>' +\n  '</tr>';\n}).join('');\n\nconst fotaRows = fota.recent.slice().reverse().map(log => {\n  const color = log.event_type.includes('failed') || log.event_type.includes('rollback') ? '#e74c3c' : \n                (log.event_type.includes('completed') || log.event_type.includes('verified') ? '#27ae60' : '#3498db');\n  return '<tr>' +\n    '<td>' + new Date(log.timestamp).toLocaleString() + '</td>' +\n    '<td><strong>' + log.device_id + '</strong></td>' +\n    '<td style=\"color:' + color + ';font-weight:bold;\">' + log.event_type + '</td>' +\n    '<td>' + log.details + '</td>' +\n  '</tr>';\n}).join('');\n\nconst commandRows = commands.recent.slice().reverse().map(log => {\n  const color = log.event_type.includes('failed') ? '#e74c3c' : \n                (log.event_type.includes('completed') || log.event_type.includes('success') ? '#27ae60' : '#3498db');\n  return '<tr>' +\n    '<td>' + new Date(log.timestamp).toLocaleString() + '</td>' +\n    '<td><strong>' + log.device_id + '</strong></td>' +\n    '<td style=\"color:' + color + ';font-weight:bold;\">' + log.event_type + '</td>' +\n    '<td>' + log.details + '</td>' +\n  '</tr>';\n}).join('');\n\nmsg.payload = `<!DOCTYPE html>\n<html>\n<head>\n  <title>System Logs - EcoWatt Cloud</title>\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <meta http-equiv=\"refresh\" content=\"30\">\n  <style>\n    * { margin:0; padding:0; box-sizing:border-box; }\n    body { font-family:'Segoe UI',Arial,sans-serif; background:#f5f7fa; }\n    .header { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:#fff; padding:26px 18px; text-align:center; }\n    .container { max-width:1400px; margin:0 auto; padding:16px; }\n    .nav a { color:#667eea; text-decoration:none; border:1px solid #667eea; border-radius:8px; padding:6px 10px; margin-right:8px; }\n    .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:16px; margin-bottom:16px; }\n    .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:16px; }\n    .stat { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:18px; text-align:center; }\n    .stat-value { font-size:2em; font-weight:700; color:#34495e; }\n    .stat-label { color:#7f8c8d; font-size:0.9em; margin-top:4px; }\n    table { width:100%; border-collapse:collapse; font-size:0.9em; }\n    th { background:#34495e; color:#fff; padding:10px; text-align:left; position:sticky; top:0; }\n    td { padding:10px; border-bottom:1px solid #ecf0f1; }\n    .log-table { max-height:400px; overflow-y:auto; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>📋 System Logs</h1>\n    <p>Security, FOTA, and Command execution logs</p>\n  </div>\n  <div class=\"container\">\n    <div class=\"nav\" style=\"margin:10px 0 14px 0;\">\n      <a href=\"/dashboard\">🏠 Dashboard</a>\n      <a href=\"/config\">⚙️ Config</a>\n      <a href=\"/commands\">📡 Commands</a>\n      <a href=\"/fota\">🔄 FOTA</a>\n      <a href=\"/logs\">📋 Logs</a>\n    </div>\n    \n    <div class=\"stats\">\n      <div class=\"stat\">\n        <div class=\"stat-value\">${security.total}</div>\n        <div class=\"stat-label\">🔒 Security Events</div>\n      </div>\n      <div class=\"stat\">\n        <div class=\"stat-value\">${fota.total}</div>\n        <div class=\"stat-label\">🔄 FOTA Operations</div>\n      </div>\n      <div class=\"stat\">\n        <div class=\"stat-value\">${commands.total}</div>\n        <div class=\"stat-label\">📡 Command Executions</div>\n      </div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">🔒 Security Logs (Recent ${security.recent.length})</h2>\n      <div class=\"log-table\">\n        <table>\n          <thead>\n            <tr>\n              <th>Timestamp</th>\n              <th>Device</th>\n              <th>Event Type</th>\n              <th>Details</th>\n            </tr>\n          </thead>\n          <tbody>\n            ${securityRows || '<tr><td colspan=\"4\" style=\"text-align:center;color:#7f8c8d;\">No security logs</td></tr>'}\n          </tbody>\n        </table>\n      </div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">🔄 FOTA Logs (Recent ${fota.recent.length})</h2>\n      <div class=\"log-table\">\n        <table>\n          <thead>\n            <tr>\n              <th>Timestamp</th>\n              <th>Device</th>\n              <th>Event Type</th>\n              <th>Details</th>\n            </tr>\n          </thead>\n          <tbody>\n            ${fotaRows || '<tr><td colspan=\"4\" style=\"text-align:center;color:#7f8c8d;\">No FOTA logs</td></tr>'}\n          </tbody>\n        </table>\n      </div>\n    </div>\n    \n    <div class=\"card\">\n      <h2 style=\"margin-bottom:12px;\">📡 Command Logs (Recent ${commands.recent.length})</h2>\n      <div class=\"log-table\">\n        <table>\n          <thead>\n            <tr>\n              <th>Timestamp</th>\n              <th>Device</th>\n              <th>Event Type</th>\n              <th>Details</th>\n            </tr>\n          </thead>\n          <tbody>\n            ${commandRows || '<tr><td colspan=\"4\" style=\"text-align:center;color:#7f8c8d;\">No command logs</td></tr>'}\n          </tbody>\n        </table>\n      </div>\n    </div>\n  </div>\n</body>\n</html>`;\n\nmsg.headers = { 'Content-Type': 'text/html' };\nreturn msg;",
+        "outputs": 1,
+        "x": 620,
+        "y": 660,
+        "wires": [["logs004"]]
+    },
+    {
+        "id": "logs004",
+        "type": "http response",
+        "z": "02823894daf27bbe",
+        "name": "Logs Response",
+        "x": 920,
+        "y": 660,
         "wires": []
     }
 ]
