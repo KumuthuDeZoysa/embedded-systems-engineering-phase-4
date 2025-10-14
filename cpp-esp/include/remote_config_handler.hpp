@@ -2,15 +2,17 @@
 #include "config_manager.hpp"
 #include "http_client.hpp"
 #include "config_update.hpp"
+#include "command_executor.hpp"
 
 class EcoHttpClient;
+class CommandExecutor;
 #include "ticker_fallback.hpp"
 #include <cstdint>
 #include <functional>
 
 class RemoteConfigHandler {
 public:
-    RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http);
+    RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http, CommandExecutor* cmd_executor = nullptr);
     ~RemoteConfigHandler();
 
     void begin(uint32_t interval_ms = 60000);
@@ -19,13 +21,23 @@ public:
     void checkForConfigUpdate();
     void sendConfigAck(const ConfigUpdateAck& ack);
     void onConfigUpdate(std::function<void()> callback);
-    void onCommand(std::function<void(const char*)> callback);
+    void onCommand(std::function<void(const CommandRequest&)> callback);
+    
+    // Command execution methods
+    void checkForCommands();
+    void sendCommandResults(const std::vector<CommandResult>& results);
     
     // Parse config update request from JSON
     bool parseConfigUpdateRequest(const char* json, ConfigUpdateRequest& request);
     
+    // Parse command request from JSON
+    bool parseCommandRequest(const char* json, CommandRequest& command);
+    
     // Generate acknowledgment JSON
     std::string generateAckJson(const ConfigUpdateAck& ack);
+    
+    // Generate command results JSON
+    std::string generateCommandResultsJson(const std::vector<CommandResult>& results);
 
 private:
     Ticker pollTicker_;
@@ -33,7 +45,8 @@ private:
     bool running_ = false;
     ConfigManager* config_ = nullptr;
     EcoHttpClient* http_ = nullptr;
-    std::function<void(const char*)> onCommandCallback_ = nullptr;
+    CommandExecutor* cmd_executor_ = nullptr;
+    std::function<void(const CommandRequest&)> onCommandCallback_ = nullptr;
     std::function<void()> onUpdateCallback_ = nullptr;
     void pollTask();
     static void pollTaskWrapper();

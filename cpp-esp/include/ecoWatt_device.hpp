@@ -6,6 +6,7 @@
 #include "data_storage.hpp"
 #include "uplink_packetizer.hpp"
 #include "remote_config_handler.hpp"
+#include "command_executor.hpp"
 #include "http_client.hpp"
 #include "wifi_connector.hpp"
 #include <stdint.h>
@@ -26,7 +27,9 @@ public:
 
     // Callback for remote config updates
     void onConfigUpdated();
-    void executeCommand(const char* cmdJson);
+    
+    // Callback for command received
+    void onCommandReceived(const CommandRequest& command);
 
 private:
     AcquisitionScheduler* scheduler_ = nullptr;
@@ -35,7 +38,7 @@ private:
     UplinkPacketizer* uplink_packetizer_ = nullptr;
     ConfigManager* config_ = nullptr;
     RemoteConfigHandler* remote_config_handler_ = nullptr;
+    CommandExecutor* command_executor_ = nullptr;
     EcoHttpClient* http_client_ = nullptr;
     WiFiConnector* wifi_ = nullptr;
-    // Add methods for device control, status, etc.
 };

@@ -8,8 +8,8 @@
 
 RemoteConfigHandler* RemoteConfigHandler::instance_ = nullptr;
 
-RemoteConfigHandler::RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http)
-    : pollTicker_(pollTaskWrapper, 60000), config_(config), http_(http) {
+RemoteConfigHandler::RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http, CommandExecutor* cmd_executor)
+    : pollTicker_(pollTaskWrapper, 60000), config_(config), http_(http), cmd_executor_(cmd_executor) {
     instance_ = this;
 }
 RemoteConfigHandler::~RemoteConfigHandler() { end(); }
@@ -40,42 +40,70 @@ void RemoteConfigHandler::onConfigUpdate(std::function<void()> callback) {
     onUpdateCallback_ = callback;
 }
 
-void RemoteConfigHandler::onCommand(std::function<void(const char*)> callback) {
+void RemoteConfigHandler::onCommand(std::function<void(const CommandRequest&)> callback) {
     onCommandCallback_ = callback;
 }
 
 void RemoteConfigHandler::checkForConfigUpdate() {
     if (!http_ || !config_) return;
     
-    Logger::info("[RemoteCfg] Checking for config updates from cloud...");
+    Logger::info("[RemoteCfg] Checking for config updates and commands from cloud...");
     
-    // Request config update from cloud
+    // Request config/command update from cloud
     EcoHttpResponse resp = http_->get(config_->getApiConfig().config_endpoint.c_str());
     if (!resp.isSuccess()) {
         Logger::warn("[RemoteCfg] Failed to get config from cloud: status=%d", resp.status_code);
         return;
     }
     
-    // Parse the response
+    // Parse the response for config updates
     ConfigUpdateRequest request;
-    if (!parseConfigUpdateRequest(resp.body.c_str(), request)) {
-        Logger::warn("[RemoteCfg] Failed to parse config update request");
-        return;
+    if (parseConfigUpdateRequest(resp.body.c_str(), request)) {
+        // Apply the configuration update
+        ConfigUpdateAck ack = config_->applyConfigUpdate(request);
+        
+        // Send acknowledgment back to cloud
+        sendConfigAck(ack);
+        
+        // Trigger callback if any parameters were accepted
+        if (!ack.accepted.empty() && onUpdateCallback_) {
+            onUpdateCallback_();
+        }
     }
     
-    // Apply the configuration update
-    ConfigUpdateAck ack = config_->applyConfigUpdate(request);
-    
-    // Send acknowledgment back to cloud
-    sendConfigAck(ack);
-    
-    // Trigger callback if any parameters were accepted
-    if (!ack.accepted.empty() && onUpdateCallback_) {
-        onUpdateCallback_();
+    // Parse the response for commands
+    CommandRequest command;
+    if (parseCommandRequest(resp.body.c_str(), command)) {
+        Logger::info("[RemoteCfg] Received command: id=%u, action=%s, target=%s, value=%.2f",
+                     command.command_id, command.action.c_str(), 
+                     command.target_register.c_str(), command.value);
+        
+        // Queue command for execution if executor is available
+        if (cmd_executor_) {
+            cmd_executor_->queueCommand(command);
+        }
+        
+        // Trigger callback if set
+        if (onCommandCallback_) {
+            onCommandCallback_(command);
+        }
     }
-    
-    // Handle commands (if any in response)
-    // TODO: Implement command handling in Part 2
+}
+
+void RemoteConfigHandler::checkForCommands() {
+    // Execute any pending commands
+    if (cmd_executor_) {
+        cmd_executor_->executePendingCommands();
+        
+        // Get executed results
+        std::vector<CommandResult> results = cmd_executor_->getExecutedResults();
+        
+        // Send results back to cloud if any
+        if (!results.empty()) {
+            sendCommandResults(results);
+            cmd_executor_->clearExecutedResults();
+        }
+    }
 }
 
 bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdateRequest& request) {
@@ -222,4 +250,93 @@ void RemoteConfigHandler::pollTaskWrapper() {
     if (instance_) {
         instance_->pollTask();
     }
+}
+
+bool RemoteConfigHandler::parseCommandRequest(const char* json, CommandRequest& command) {
+    StaticJsonDocument<1024> doc;
+    DeserializationError error = deserializeJson(doc, json);
+    
+    if (error) {
+        Logger::error("[RemoteCfg] JSON parse error for command: %s", error.c_str());
+        return false;
+    }
+    
+    // Check if there's a command object
+    if (!doc.containsKey("command")) {
+        Logger::debug("[RemoteCfg] No command in response");
+        return false;
+    }
+    
+    JsonObject cmd = doc["command"];
+    
+    // Parse command fields
+    if (!cmd.containsKey("command_id") || !cmd.containsKey("action") || 
+        !cmd.containsKey("target_register") || !cmd.containsKey("value")) {
+        Logger::warn("[RemoteCfg] Command missing required fields");
+        return false;
+    }
+    
+    command.command_id = cmd["command_id"].as<uint32_t>();
+    command.action = cmd["action"].as<const char*>();
+    command.target_register = cmd["target_register"].as<const char*>();
+    command.value = cmd["value"].as<float>();
+    command.timestamp = cmd.containsKey("timestamp") ? cmd["timestamp"].as<uint32_t>() : millis();
+    command.nonce = cmd.containsKey("nonce") ? cmd["nonce"].as<uint32_t>() : command.timestamp;
+    
+    Logger::debug("[RemoteCfg] Parsed command: id=%u, action=%s, target=%s, value=%.2f",
+                  command.command_id, command.action.c_str(), 
+                  command.target_register.c_str(), command.value);
+    
+    return true;
+}
+
+void RemoteConfigHandler::sendCommandResults(const std::vector<CommandResult>& results) {
+    if (results.empty()) {
+        return;
+    }
+    
+    std::string resultsJson = generateCommandResultsJson(results);
+    
+    Logger::info("[RemoteCfg] Sending %u command results to cloud", (unsigned)results.size());
+    Logger::debug("[RemoteCfg] Results JSON: %s", resultsJson.c_str());
+    
+    // Send results to cloud (use command result endpoint)
+    std::string result_endpoint = config_->getApiConfig().config_endpoint + "/command/result";
+    EcoHttpResponse resp = http_->post(result_endpoint.c_str(), resultsJson.c_str(), 
+                                       resultsJson.length(), "application/json");
+    
+    if (resp.isSuccess()) {
+        Logger::info("[RemoteCfg] Command results sent successfully");
+    } else {
+        Logger::warn("[RemoteCfg] Failed to send command results: status=%d", resp.status_code);
+    }
+}
+
+std::string RemoteConfigHandler::generateCommandResultsJson(const std::vector<CommandResult>& results) {
+    StaticJsonDocument<2048> doc;
+    
+    doc["timestamp"] = millis();
+    doc["result_count"] = results.size();
+    
+    JsonArray results_array = doc.createNestedArray("command_results");
+    
+    for (const auto& result : results) {
+        JsonObject r = results_array.createNestedObject();
+        r["command_id"] = result.command_id;
+        r["status"] = commandStatusToString(result.status);
+        r["status_message"] = result.status_message;
+        r["executed_at"] = result.executed_at;
+        
+        if (result.status == CommandStatus::SUCCESS) {
+            r["actual_value"] = result.actual_value;
+        }
+        
+        if (!result.error_details.empty()) {
+            r["error_details"] = result.error_details;
+        }
+    }
+    
+    std::string output;
+    serializeJson(doc, output);
+    return output;
 }
