@@ -47,6 +47,7 @@ public:
     ConfigManager(const char* config_file = "/config/config.json");
     ~ConfigManager();
 
+    std::string getDeviceId() const;
     ModbusConfig getModbusConfig() const;
     ApiConfig getApiConfig() const;
     RegisterConfig getRegisterConfig(uint8_t addr) const;
@@ -76,6 +77,7 @@ public:
     ConfigValidationRules getValidationRules() const;
 
 private:
+    std::string device_id_;
     ModbusConfig modbus_config_;
     ApiConfig api_config_;
     std::vector<RegisterConfig> register_configs_;

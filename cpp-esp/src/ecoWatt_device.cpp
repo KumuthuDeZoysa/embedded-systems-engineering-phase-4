@@ -186,8 +186,9 @@ void EcoWattDevice::setup() {
     ApiConfig api_conf = config_->getApiConfig();
     ModbusConfig mbc = config_->getModbusConfig();
     if (!http_client_) {
+        // This client is for INVERTER communication (Modbus proxy at 20.15.114.131)
         http_client_ = new EcoHttpClient(api_conf.inverter_base_url, mbc.timeout_ms);
-        Logger::info("HTTP Client initialized with base URL: %s", api_conf.inverter_base_url.c_str());
+        Logger::info("HTTP Client initialized with INVERTER base URL: %s", api_conf.inverter_base_url.c_str());
     }
 
     // WiFi: use wifi config if present in config.json, otherwise rely on /config/.env overrides
@@ -230,21 +231,32 @@ void EcoWattDevice::setup() {
         if (security_->begin()) {
             Logger::info("Security Layer initialized successfully");
             
-            // Create secure HTTP client wrapper
+            // Create SEPARATE HTTP client for CLOUD operations (config/upload at 10.52.180.183)
+            EcoHttpClient* cloud_http_client = new EcoHttpClient(api_conf.upload_base_url, mbc.timeout_ms);
+            Logger::info("Cloud HTTP Client initialized with base URL: %s", api_conf.upload_base_url.c_str());
+            
+            // Set API key and Device-ID for cloud client
+            std::string device_id = config_->getDeviceId();
+            const char* header_keys[] = {"Authorization", "Device-ID"};
+            const char* header_values[] = {api_conf.api_key.c_str(), device_id.c_str()};
+            cloud_http_client->setDefaultHeaders(header_keys, header_values, 2);
+            
+            // Create secure HTTP client wrapper using CLOUD client
             if (!secure_http_) {
-                secure_http_ = new SecureHttpClient(http_client_, security_);
-                Logger::info("Secure HTTP Client initialized");
+                secure_http_ = new SecureHttpClient(cloud_http_client, security_);
+                Logger::info("Secure HTTP Client initialized for CLOUD operations");
             }
         } else {
             Logger::error("Failed to initialize Security Layer");
         }
     }
     
-    // Set the mandatory API key for all requests
-    const char* header_keys[] = {"Authorization"};
-    const char* header_values[] = {api_conf.api_key.c_str()};
-    http_client_->setDefaultHeaders(header_keys, header_values, 1);
-    Logger::info("API key configured for requests");
+    // Set the mandatory API key and Device-ID for all requests
+    std::string device_id = config_->getDeviceId();
+    const char* header_keys[] = {"Authorization", "Device-ID"};
+    const char* header_values[] = {api_conf.api_key.c_str(), device_id.c_str()};
+    http_client_->setDefaultHeaders(header_keys, header_values, 2);
+    Logger::info("API key and Device-ID (%s) configured for requests", device_id.c_str());
 
     if (!adapter_) {
         adapter_ = new ProtocolAdapter(config_, http_client_);

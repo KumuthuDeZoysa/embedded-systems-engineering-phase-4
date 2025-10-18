@@ -119,12 +119,15 @@ EcoHttpResponse SecureHttpClient::secureGet(const char* endpoint,
     // Add nonce as query parameter or header
     uint32_t nonce = security_->getNextNonce();
     
-    // Add custom headers with nonce and timestamp
+    // Add custom headers with nonce and Unix timestamp (seconds since 1970)
     const char* header_keys[] = {"X-Nonce", "X-Timestamp"};
     char nonce_str[32];
     char timestamp_str[32];
     snprintf(nonce_str, sizeof(nonce_str), "%u", nonce);
-    snprintf(timestamp_str, sizeof(timestamp_str), "%u", (unsigned)millis());
+    // Get Unix timestamp from NTP/RTC - for now use approximation
+    // In production, implement proper time sync via NTP
+    unsigned long unix_timestamp = 1704067200 + (millis() / 1000); // ~2024-01-01 base
+    snprintf(timestamp_str, sizeof(timestamp_str), "%lu", unix_timestamp);
     const char* header_values[] = {nonce_str, timestamp_str};
     
     // Compute HMAC over: endpoint + nonce + timestamp

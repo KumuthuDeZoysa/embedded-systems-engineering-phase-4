@@ -47,11 +47,22 @@ void RemoteConfigHandler::onCommand(std::function<void(const CommandRequest&)> c
 void RemoteConfigHandler::checkForConfigUpdate() {
     if (!secure_http_ || !config_) return;
     
-    Logger::info("[RemoteCfg] Checking for config updates and commands from cloud...");
+    Logger::info("[RemoteCfg] Checking for config updates from cloud...");
     
-    // Request config/command update from cloud using secured GET
+    // Use SIMPLE endpoint without security for testing
+    std::string simple_endpoint = "/api/inverter/config/simple";
     std::string plain_response;
-    EcoHttpResponse resp = secure_http_->secureGet(config_->getApiConfig().config_endpoint.c_str(), plain_response);
+    
+    Logger::info("[RemoteCfg] Requesting endpoint: %s", simple_endpoint.c_str());
+    Logger::info("[RemoteCfg] Using PLAIN HTTP GET (no security)");
+    
+    // Make plain HTTP GET request (no security)
+    EcoHttpResponse resp = secure_http_->getHttpClient()->get(simple_endpoint.c_str());
+    plain_response = resp.body;
+    
+    Logger::info("[RemoteCfg] Response status: %d", resp.status_code);
+    Logger::info("[RemoteCfg] Response body length: %u bytes", (unsigned)plain_response.length());
+    
     if (!resp.isSuccess()) {
         Logger::warn("[RemoteCfg] Failed to get config from cloud: status=%d", resp.status_code);
         return;

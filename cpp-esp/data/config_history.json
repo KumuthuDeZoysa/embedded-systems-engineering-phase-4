@@ -1,0 +1,198 @@
+[
+  {
+    "timestamp": "2025-10-18T16:24:28.991120",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:24:30.340947",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:24:31.057682",
+    "device_id": "EcoWatt001",
+    "nonce": 303,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:24:31.953183",
+    "device_id": "EcoWatt001",
+    "nonce": 304,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:34:25.306439",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:34:27.359799",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:41:23.280062",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:46:35.774369",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:46:37.354521",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:46:38.060761",
+    "device_id": "EcoWatt001",
+    "nonce": 303,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:53:03.814225",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 25,
+      "registers": [
+        0,
+        1,
+        3
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T17:07:01.759485",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 8,
+      "registers": [
+        0,
+        1,
+        4
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T17:07:53.664989",
+    "device_id": "EcoWatt001",
+    "nonce": 303,
+    "config": {
+      "sampling_interval": 8,
+      "registers": [
+        0,
+        1,
+        4
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T17:12:30.240849",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 8,
+      "registers": [
+        0,
+        1,
+        4
+      ]
+    },
+    "status": "queued"
+  }
+]

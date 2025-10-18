@@ -10,9 +10,23 @@ import hmac
 import hashlib
 import base64
 import json
+import os
+from pathlib import Path
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Log all incoming requests
+@app.before_request
+def log_request_info():
+    if '/api/' in request.path:
+        print(f"\n[REQUEST] {request.method} {request.path}")
+        print(f"[REQUEST] Device-ID: {request.headers.get('Device-ID', 'None')}")
+        print(f"[REQUEST] Authorization: {request.headers.get('Authorization', 'None')[:20]}...")
+
+# Configuration persistence
+CONFIG_FILE = Path("data/pending_configs.json")
+HISTORY_FILE = Path("data/config_history.json")
 
 # In-memory stores
 UPLOADS = []
@@ -27,6 +41,51 @@ SIM_EXCEPTIONS = set()
 PENDING_CONFIGS = {}  # device_id -> {nonce, config_update}
 CONFIG_ACKS = []      # List of all config acknowledgments received
 CONFIG_HISTORY = []   # Full history of config changes
+
+def save_pending_configs():
+    """Save pending configurations to disk."""
+    try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(PENDING_CONFIGS, f, indent=2)
+        print(f"[CONFIG] Saved {len(PENDING_CONFIGS)} pending configs to disk")
+    except Exception as e:
+        print(f"[CONFIG] Error saving configs: {e}")
+
+def load_pending_configs():
+    """Load pending configurations from disk."""
+    global PENDING_CONFIGS
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, 'r') as f:
+                PENDING_CONFIGS = json.load(f)
+            print(f"[CONFIG] Loaded {len(PENDING_CONFIGS)} pending configs from disk")
+        else:
+            print(f"[CONFIG] No saved configs found, starting fresh")
+    except Exception as e:
+        print(f"[CONFIG] Error loading configs: {e}")
+        PENDING_CONFIGS = {}
+
+def save_config_history():
+    """Save configuration history to disk."""
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(CONFIG_HISTORY[-100:], f, indent=2)  # Keep last 100 entries
+    except Exception as e:
+        print(f"[CONFIG] Error saving history: {e}")
+
+def load_config_history():
+    """Load configuration history from disk."""
+    global CONFIG_HISTORY
+    try:
+        if HISTORY_FILE.exists():
+            with open(HISTORY_FILE, 'r') as f:
+                CONFIG_HISTORY = json.load(f)
+            print(f"[CONFIG] Loaded {len(CONFIG_HISTORY)} history entries from disk")
+    except Exception as e:
+        print(f"[CONFIG] Error loading history: {e}")
+        CONFIG_HISTORY = []
 
 # -------- Command Execution Management --------
 PENDING_COMMANDS = {}  # device_id -> {nonce, command}
@@ -550,6 +609,33 @@ def inverter_config():
 
 # ============ RUNTIME CONFIGURATION ENDPOINTS ============
 
+@app.route('/api/inverter/config/simple', methods=['GET'])
+def get_device_config_simple():
+    """
+    SIMPLIFIED configuration endpoint WITHOUT security checks.
+    Device polls this endpoint for pending configuration updates.
+    Returns pending config if available, empty otherwise.
+    Use this for testing/debugging configuration flow.
+    """
+    device_id = request.headers.get('Device-ID') or request.args.get('device_id') or 'EcoWatt001'
+    
+    print(f"[CONFIG-SIMPLE] ====== SIMPLE ENDPOINT CALLED ======")
+    print(f"[CONFIG-SIMPLE] Request from device: {device_id}")
+    print(f"[CONFIG-SIMPLE] Request path: {request.path}")
+    print(f"[CONFIG-SIMPLE] Request method: {request.method}")
+    
+    pending = PENDING_CONFIGS.get(device_id)
+    if pending:
+        print(f"[CONFIG-SIMPLE] Sending pending config to {device_id}: {pending}")
+        return jsonify(pending)
+    
+    # No pending config
+    print(f"[CONFIG-SIMPLE] No pending config for {device_id}")
+    return jsonify({
+        "status": "no_config",
+        "message": "No pending configuration updates"
+    })
+
 @app.route('/api/inverter/config', methods=['GET'])
 def get_device_config():
     """
@@ -696,6 +782,20 @@ def send_config_update():
     
     # Store pending config for device
     PENDING_CONFIGS[device_id] = pending_config
+    
+    # Save to disk immediately
+    save_pending_configs()
+    
+    # Add to history
+    history_entry = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device_id': device_id,
+        'nonce': nonce,
+        'config': config_update,
+        'status': 'queued'
+    }
+    CONFIG_HISTORY.append(history_entry)
+    save_config_history()
     
     print(f"[CONFIG] Queued config update for {device_id}: nonce={nonce}, interval={sampling_interval}s, registers={registers}")
     
@@ -1275,6 +1375,12 @@ def _start_flusher_once():
     t.start()
 
 _start_flusher_once()
+
+# Load persisted configurations on startup
+print("[CONFIG] Loading persisted configurations...")
+load_pending_configs()
+load_config_history()
+print(f"[CONFIG] Ready: {len(PENDING_CONFIGS)} pending configs, {len(CONFIG_HISTORY)} history entries")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)

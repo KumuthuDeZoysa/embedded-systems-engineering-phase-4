@@ -29,6 +29,9 @@ ConfigManager::ConfigManager(const char* config_file) {
 }
 
 void ConfigManager::initializeDefaults() {
+    // Default device ID
+    device_id_ = "EcoWatt001";
+    
     // Hardcoded Modbus config
     modbus_config_.slave_address = 17;
     modbus_config_.timeout_ms = 5000;
@@ -36,11 +39,12 @@ void ConfigManager::initializeDefaults() {
     modbus_config_.retry_delay_ms = 1000;
 
     // Hardcoded API config (inverter data accessed via api_key only)
-    api_config_.inverter_base_url = "http://10.50.126.183:8080";
+    api_config_.inverter_base_url = "http://20.15.114.131:8080";
+    api_config_.upload_base_url = "http://10.52.180.183:8080";  // Cloud server for config/upload
     api_config_.read_endpoint = "/api/inverter/read";
     api_config_.write_endpoint = "/api/inverter/write";
     api_config_.config_endpoint = "/api/inverter/config";
-    api_config_.upload_endpoint = "http://10.50.126.183:8080/api/upload";
+    api_config_.upload_endpoint = "http://10.52.180.183:8080/api/upload";
     api_config_.api_key = "NjhhZWIwNDU1ZDdmMzg3MzNiMTQ5YTFkOjY4YWViMDQ1NWQ3ZjM4NzMzYjE0OWExMw==";
 
     // Set correct gain values for each register
@@ -79,7 +83,7 @@ void ConfigManager::initializeDefaults() {
 
 ConfigManager::~ConfigManager() {}
 
-
+std::string ConfigManager::getDeviceId() const { return device_id_; }
 
 ModbusConfig ConfigManager::getModbusConfig() const { return modbus_config_; }
 ApiConfig ConfigManager::getApiConfig() const { return api_config_; }
