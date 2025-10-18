@@ -194,5 +194,517 @@
       ]
     },
     "status": "queued"
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:13:30.946952",
+    "nonce": 231,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:14:34.308384",
+    "nonce": 232,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:15:35.304955",
+    "nonce": 233,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:16:38.991203",
+    "nonce": 234,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:17:38.980826",
+    "nonce": 235,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:18:38.980874",
+    "nonce": 236,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:19:39.204630",
+    "nonce": 237,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:20:39.448202",
+    "nonce": 238,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:21:39.497271",
+    "nonce": 239,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:22:39.778714",
+    "nonce": 240,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:23:39.654776",
+    "nonce": 241,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:24:39.648655",
+    "nonce": 242,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:25:39.643527",
+    "nonce": 243,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:26:39.715364",
+    "nonce": 244,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:27:39.723684",
+    "nonce": 245,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:28:41.338646",
+    "nonce": 246,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:29:43.793503",
+    "nonce": 247,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:30:43.990246",
+    "nonce": 248,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:31:48.743774",
+    "nonce": 249,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:32:49.965113",
+    "nonce": 250,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:33:53.424998",
+    "nonce": 251,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:34:53.392833",
+    "nonce": 252,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:35:53.651920",
+    "nonce": 253,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:36:57.547845",
+    "nonce": 254,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:37:57.354991",
+    "nonce": 255,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:38:57.735716",
+    "nonce": 256,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:40:04.075833",
+    "nonce": 257,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T17:41:05.336528",
+    "nonce": 258,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-18T17:42:24.188241",
+    "device_id": "EcoWatt001",
+    "nonce": 30,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        8
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:08:38.816973",
+    "nonce": 251,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-18T19:08:47.767088",
+    "device_id": "EcoWatt001",
+    "nonce": 3,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        8
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:09:41.767984",
+    "nonce": 252,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:10:43.416680",
+    "nonce": 253,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:11:47.108843",
+    "nonce": 254,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:13:07.554056",
+    "nonce": 251,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:14:09.446736",
+    "nonce": 252,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-18T19:15:20.572358",
+    "device_id": "EcoWatt001",
+    "nonce": 9,
+    "config": {
+      "sampling_interval": 22,
+      "registers": [
+        0,
+        1,
+        2,
+        4,
+        6,
+        8
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:16:02.291417",
+    "nonce": 251,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:17:12.152751",
+    "nonce": 252,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:18:21.468462",
+    "nonce": 253,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:19:24.399567",
+    "nonce": 254,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:20:33.037542",
+    "nonce": 255,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:21:36.433911",
+    "nonce": 256,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:22:42.882922",
+    "nonce": 257,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:23:45.350618",
+    "nonce": 258,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:24:52.244338",
+    "nonce": 259,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:25:59.416806",
+    "nonce": 260,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:27:04.447061",
+    "nonce": 261,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:28:09.340921",
+    "nonce": 262,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:29:15.510023",
+    "nonce": 263,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:30:21.543883",
+    "nonce": 264,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:31:27.611835",
+    "nonce": 265,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-18T19:32:33.328450",
+    "nonce": 266,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-18T19:32:38.077169",
+    "device_id": "EcoWatt001",
+    "nonce": 26,
+    "config": {
+      "sampling_interval": 22,
+      "registers": [
+        0,
+        1,
+        2,
+        4,
+        6,
+        10
+      ]
+    },
+    "status": "queued"
   }
 ]
