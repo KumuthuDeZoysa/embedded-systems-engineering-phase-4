@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <string>
+#include <cstring>
 
 // Command request from cloud to device
 struct CommandRequest {

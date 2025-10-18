@@ -47,13 +47,18 @@ void Logger::write_log(Level level, const char* fmt, va_list args) {
     char time_buf[32];
     snprintf(time_buf, sizeof(time_buf), "%04lu-%02lu-%02lu %02lu:%02lu:%02lu.%03lu",
              2025UL, 9UL, 22UL + days, hours % 24, minutes % 60, seconds % 60, ms % 1000);
+    
+    // Print to serial only (disable LittleFS logging to avoid boot issues)
     printf("[%s] [%s] %s\n", time_buf, level_str, buf);
+    
+    /* DISABLED: LittleFS logging causing boot crashes
     File fh = LittleFS.open(log_file_.c_str(), "a+");
     if (fh) {
         fh.printf("[%s] [%s] %s\n", time_buf, level_str, buf);
         if (flush_on_write_) fh.flush();
         fh.close();
     }
+    */
 }
 
 void Logger::log(Level level, const char* fmt, ...) {

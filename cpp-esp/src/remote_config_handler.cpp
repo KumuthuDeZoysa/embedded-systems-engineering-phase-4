@@ -8,8 +8,8 @@
 
 RemoteConfigHandler* RemoteConfigHandler::instance_ = nullptr;
 
-RemoteConfigHandler::RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http, CommandExecutor* cmd_executor)
-    : pollTicker_(pollTaskWrapper, 60000), config_(config), http_(http), cmd_executor_(cmd_executor) {
+RemoteConfigHandler::RemoteConfigHandler(ConfigManager* config, SecureHttpClient* secure_http, CommandExecutor* cmd_executor)
+    : pollTicker_(pollTaskWrapper, 60000), config_(config), secure_http_(secure_http), cmd_executor_(cmd_executor) {
     instance_ = this;
 }
 RemoteConfigHandler::~RemoteConfigHandler() { end(); }
@@ -45,20 +45,21 @@ void RemoteConfigHandler::onCommand(std::function<void(const CommandRequest&)> c
 }
 
 void RemoteConfigHandler::checkForConfigUpdate() {
-    if (!http_ || !config_) return;
+    if (!secure_http_ || !config_) return;
     
     Logger::info("[RemoteCfg] Checking for config updates and commands from cloud...");
     
-    // Request config/command update from cloud
-    EcoHttpResponse resp = http_->get(config_->getApiConfig().config_endpoint.c_str());
+    // Request config/command update from cloud using secured GET
+    std::string plain_response;
+    EcoHttpResponse resp = secure_http_->secureGet(config_->getApiConfig().config_endpoint.c_str(), plain_response);
     if (!resp.isSuccess()) {
         Logger::warn("[RemoteCfg] Failed to get config from cloud: status=%d", resp.status_code);
         return;
     }
     
-    // Parse the response for config updates
+    // Parse the response for config updates (use plain_response instead of resp.body)
     ConfigUpdateRequest request;
-    if (parseConfigUpdateRequest(resp.body.c_str(), request)) {
+    if (parseConfigUpdateRequest(plain_response.c_str(), request)) {
         // Apply the configuration update
         ConfigUpdateAck ack = config_->applyConfigUpdate(request);
         
@@ -71,9 +72,9 @@ void RemoteConfigHandler::checkForConfigUpdate() {
         }
     }
     
-    // Parse the response for commands
+    // Parse the response for commands (use plain_response)
     CommandRequest command;
-    if (parseCommandRequest(resp.body.c_str(), command)) {
+    if (parseCommandRequest(plain_response.c_str(), command)) {
         Logger::info("[RemoteCfg] Received command: id=%u, action=%s, target=%s, value=%.2f",
                      command.command_id, command.action.c_str(), 
                      command.target_register.c_str(), command.value);
@@ -107,7 +108,7 @@ void RemoteConfigHandler::checkForCommands() {
 }
 
 bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdateRequest& request) {
-    StaticJsonDocument<1024> doc;
+    DynamicJsonDocument doc(1024);  // Allocate on heap instead of stack
     DeserializationError error = deserializeJson(doc, json);
     
     if (error) {
@@ -121,6 +122,23 @@ bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdat
     request.nonce = 0;
     request.timestamp = millis();
     
+    // Parse nonce (always present in secured responses)
+    if (doc.containsKey("nonce")) {
+        request.nonce = doc["nonce"].as<uint32_t>();
+    } else {
+        // Generate nonce from timestamp if not provided
+        request.nonce = request.timestamp;
+    }
+    
+    // Check for status field first
+    if (doc.containsKey("status")) {
+        String status = doc["status"].as<String>();
+        if (status == "no_config") {
+            Logger::debug("[RemoteCfg] Server reports no pending config");
+            return false; // No config to process, but this is normal
+        }
+    }
+    
     // Check if there's a config_update object
     if (!doc.containsKey("config_update")) {
         Logger::debug("[RemoteCfg] No config_update in response");
@@ -128,14 +146,6 @@ bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdat
     }
     
     JsonObject config_update = doc["config_update"];
-    
-    // Parse nonce (if present)
-    if (doc.containsKey("nonce")) {
-        request.nonce = doc["nonce"].as<uint32_t>();
-    } else {
-        // Generate nonce from timestamp if not provided
-        request.nonce = request.timestamp;
-    }
     
     // Parse sampling interval
     if (config_update.containsKey("sampling_interval")) {
@@ -190,10 +200,10 @@ void RemoteConfigHandler::sendConfigAck(const ConfigUpdateAck& ack) {
     Logger::info("[RemoteCfg] Sending config acknowledgment to cloud");
     Logger::debug("[RemoteCfg] Ack JSON: %s", ackJson.c_str());
     
-    // Send ACK to cloud (use config_endpoint with /ack suffix or dedicated endpoint)
+    // Send ACK to cloud using secured POST
     std::string ack_endpoint = config_->getApiConfig().config_endpoint + "/ack";
-    EcoHttpResponse resp = http_->post(ack_endpoint.c_str(), ackJson.c_str(), 
-                                       ackJson.length(), "application/json");
+    std::string plain_response;
+    EcoHttpResponse resp = secure_http_->securePost(ack_endpoint.c_str(), ackJson, plain_response);
     
     if (resp.isSuccess()) {
         Logger::info("[RemoteCfg] Config acknowledgment sent successfully");
@@ -203,7 +213,7 @@ void RemoteConfigHandler::sendConfigAck(const ConfigUpdateAck& ack) {
 }
 
 std::string RemoteConfigHandler::generateAckJson(const ConfigUpdateAck& ack) {
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2048);  // Allocate on heap instead of stack
     
     doc["nonce"] = ack.nonce;
     doc["timestamp"] = ack.timestamp;
@@ -253,7 +263,7 @@ void RemoteConfigHandler::pollTaskWrapper() {
 }
 
 bool RemoteConfigHandler::parseCommandRequest(const char* json, CommandRequest& command) {
-    StaticJsonDocument<1024> doc;
+    DynamicJsonDocument doc(1024);  // Allocate on heap instead of stack
     DeserializationError error = deserializeJson(doc, json);
     
     if (error) {
@@ -300,10 +310,10 @@ void RemoteConfigHandler::sendCommandResults(const std::vector<CommandResult>& r
     Logger::info("[RemoteCfg] Sending %u command results to cloud", (unsigned)results.size());
     Logger::debug("[RemoteCfg] Results JSON: %s", resultsJson.c_str());
     
-    // Send results to cloud (use command result endpoint)
+    // Send results to cloud using secured POST
     std::string result_endpoint = config_->getApiConfig().config_endpoint + "/command/result";
-    EcoHttpResponse resp = http_->post(result_endpoint.c_str(), resultsJson.c_str(), 
-                                       resultsJson.length(), "application/json");
+    std::string plain_response;
+    EcoHttpResponse resp = secure_http_->securePost(result_endpoint.c_str(), resultsJson, plain_response);
     
     if (resp.isSuccess()) {
         Logger::info("[RemoteCfg] Command results sent successfully");
@@ -313,7 +323,7 @@ void RemoteConfigHandler::sendCommandResults(const std::vector<CommandResult>& r
 }
 
 std::string RemoteConfigHandler::generateCommandResultsJson(const std::vector<CommandResult>& results) {
-    StaticJsonDocument<2048> doc;
+    DynamicJsonDocument doc(2048);  // Allocate on heap instead of stack
     
     doc["timestamp"] = millis();
     doc["result_count"] = results.size();

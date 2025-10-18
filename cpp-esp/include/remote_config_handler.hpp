@@ -1,10 +1,11 @@
 #pragma once
 #include "config_manager.hpp"
 #include "http_client.hpp"
+#include "secure_http_client.hpp"
 #include "config_update.hpp"
 #include "command_executor.hpp"
 
-class EcoHttpClient;
+class SecureHttpClient;
 class CommandExecutor;
 #include "ticker_fallback.hpp"
 #include <cstdint>
@@ -12,7 +13,7 @@ class CommandExecutor;
 
 class RemoteConfigHandler {
 public:
-    RemoteConfigHandler(ConfigManager* config, EcoHttpClient* http, CommandExecutor* cmd_executor = nullptr);
+    RemoteConfigHandler(ConfigManager* config, SecureHttpClient* secure_http, CommandExecutor* cmd_executor = nullptr);
     ~RemoteConfigHandler();
 
     void begin(uint32_t interval_ms = 60000);
@@ -44,7 +45,7 @@ private:
     uint32_t pollInterval_ = 60000;
     bool running_ = false;
     ConfigManager* config_ = nullptr;
-    EcoHttpClient* http_ = nullptr;
+    SecureHttpClient* secure_http_ = nullptr;
     CommandExecutor* cmd_executor_ = nullptr;
     std::function<void(const CommandRequest&)> onCommandCallback_ = nullptr;
     std::function<void()> onUpdateCallback_ = nullptr;

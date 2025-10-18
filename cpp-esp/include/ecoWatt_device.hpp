@@ -9,6 +9,10 @@
 #include "command_executor.hpp"
 #include "http_client.hpp"
 #include "wifi_connector.hpp"
+#include "security_layer.hpp"
+#include "secure_http_client.hpp"
+#include "fota_manager.hpp"
+#include <LittleFS.h>
 #include <stdint.h>
 
 class EcoWattDevice {
@@ -41,4 +45,7 @@ private:
     CommandExecutor* command_executor_ = nullptr;
     EcoHttpClient* http_client_ = nullptr;
     WiFiConnector* wifi_ = nullptr;
+    SecurityLayer* security_ = nullptr;
+    SecureHttpClient* secure_http_ = nullptr;
+    FOTAManager* fota_ = nullptr;
 };

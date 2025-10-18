@@ -16,8 +16,8 @@
     "background_polling": true
   },
   "api": {
-    "inverter_base_url": "http://10.50.126.183:8080",
-    "upload_base_url": "http://10.50.126.183:8080",
+    "inverter_base_url": "http://20.15.114.131:8080",
+    "upload_base_url": "http://192.168.1.152:8080",
     "endpoints": {
   "read": "/api/inverter/read",
   "write": "/api/inverter/write",

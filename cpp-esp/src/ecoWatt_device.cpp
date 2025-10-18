@@ -14,6 +14,7 @@
 #include "../include/config_manager.hpp"
 #include "../include/uplink_packetizer.hpp"
 #include "../include/remote_config_handler.hpp"
+#include "../include/command_executor.hpp"
 #include "../include/http_client.hpp"
 #include "../include/logger.hpp"
 #include "../include/wifi_connector.hpp"
@@ -23,11 +24,12 @@
 #endif
 #include <Arduino.h>
 static void printMemoryStats(const char* tag) {
-#ifdef ESP32
-    Logger::info("[MEM] %s | Free heap: %u bytes | Min heap: %u bytes", tag, ESP.getFreeHeap(), ESP.getMinFreeHeap());
-#endif
-    char dummy;
-    Logger::info("[MEM] %s | Stack ptr: %p", tag, &dummy);
+    // Temporarily disabled to prevent stack overflow during demo
+    // #ifdef ESP32
+    //     Logger::info("[MEM] %s | Free heap: %u bytes | Min heap: %u bytes", tag, ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    // #endif
+    //     char dummy;
+    //     Logger::info("[MEM] %s | Stack ptr: %p", tag, &dummy);
 }
 EcoWattDevice::EcoWattDevice() {}
 EcoWattDevice::~EcoWattDevice() {
@@ -36,6 +38,10 @@ EcoWattDevice::~EcoWattDevice() {
     delete storage_;
     delete uplink_packetizer_;
     delete remote_config_handler_;
+    delete command_executor_;
+    delete fota_;
+    delete secure_http_;
+    delete security_;
     delete http_client_;
     delete config_;
     delete wifi_;
@@ -151,40 +157,13 @@ void EcoWattDevice::onConfigUpdated() {
     }
 }
 
-void EcoWattDevice::executeCommand(const char* cmdJson) {
-    if (!adapter_ || !cmdJson) return;
-
-    char commandBuf[64];
-    if (!extractJsonStringFieldLocal(cmdJson, "command", commandBuf, sizeof(commandBuf))) {
-        Logger::warn("Command JSON missing or invalid 'command' field");
-        return;
-    }
-
-    if (strcmp(commandBuf, "write") == 0) {
-        char regBuf[32];
-        char valBuf[64];
-        if (!extractJsonNumberFieldLocal(cmdJson, "register", regBuf, sizeof(regBuf))) {
-            Logger::warn("Command JSON missing or invalid 'register' field");
-            return;
-        }
-        if (!extractJsonNumberFieldLocal(cmdJson, "value", valBuf, sizeof(valBuf))) {
-            Logger::warn("Command JSON missing or invalid 'value' field");
-            return;
-        }
-        int reg_addr = atoi(regBuf);
-        float value = strtof(valBuf, NULL);
-
-        if (config_) {
-            RegisterConfig reg_config = config_->getRegisterConfig((uint8_t)reg_addr);
-            uint16_t raw_value = 0;
-            if (reg_config.gain > 0) {
-                raw_value = (uint16_t)(value * reg_config.gain);
-            } else {
-                raw_value = (uint16_t)(value);
-            }
-            adapter_->writeRegister((uint8_t)reg_addr, raw_value);
-        }
-    }
+void EcoWattDevice::onCommandReceived(const CommandRequest& command) {
+    Logger::info("[EcoWattDevice] Command received: id=%u, action=%s, target=%s, value=%.2f",
+                 command.command_id, command.action.c_str(), 
+                 command.target_register.c_str(), command.value);
+    
+    // Command is already queued by RemoteConfigHandler/CommandExecutor
+    // This callback is just for logging/monitoring
 }
 
 void EcoWattDevice::setup() {
@@ -200,6 +179,10 @@ void EcoWattDevice::setup() {
         Logger::info("DataStorage initialized");
     }
 
+    // Initialize Security Layer (if enabled in config)
+    // Note: SecurityConfig needs to be retrieved from config
+    // For now, we'll initialize it after WiFi is connected
+    
     ApiConfig api_conf = config_->getApiConfig();
     ModbusConfig mbc = config_->getModbusConfig();
     if (!http_client_) {
@@ -228,6 +211,35 @@ void EcoWattDevice::setup() {
         Logger::error("WiFi connection failed after 30 seconds");
     }
     
+    // Initialize Security Layer (after WiFi, before HTTP operations)
+    if (!security_) {
+        // Load security config from config.json
+        // For Milestone 4, we'll use hardcoded PSK from config
+        Logger::info("Initializing Security Layer...");
+        
+        // Create security config with proper initialization
+        SecurityConfig sec_config = {
+            .psk = "c41716a134168f52fbd4be3302fa5a88127ddde749501a199607b4c286ad29b3",
+            .encryption_enabled = true,
+            .use_real_encryption = false,
+            .nonce_window = 100,
+            .strict_nonce_checking = true
+        };
+        
+        security_ = new SecurityLayer(sec_config);
+        if (security_->begin()) {
+            Logger::info("Security Layer initialized successfully");
+            
+            // Create secure HTTP client wrapper
+            if (!secure_http_) {
+                secure_http_ = new SecureHttpClient(http_client_, security_);
+                Logger::info("Secure HTTP Client initialized");
+            }
+        } else {
+            Logger::error("Failed to initialize Security Layer");
+        }
+    }
+    
     // Set the mandatory API key for all requests
     const char* header_keys[] = {"Authorization"};
     const char* header_values[] = {api_conf.api_key.c_str()};
@@ -239,13 +251,17 @@ void EcoWattDevice::setup() {
         Logger::info("ProtocolAdapter initialized with slave address %d", mbc.slave_address);
     }
 
+    // TEMPORARILY DISABLED FOR FOTA TESTING
+    /*
     if (!uplink_packetizer_) {
-        uplink_packetizer_ = new UplinkPacketizer(storage_, http_client_);
+        uplink_packetizer_ = new UplinkPacketizer(storage_, secure_http_);
         // Use the upload endpoint directly (should be a full URL)
         uplink_packetizer_->setCloudEndpoint(api_conf.upload_endpoint);
         uplink_packetizer_->begin(15 * 1000); // Upload every 15 seconds for demo
-        Logger::info("UplinkPacketizer initialized, upload interval: 15 seconds (demo mode)");
+        Logger::info("UplinkPacketizer initialized with security enabled, upload interval: 15 seconds");
     }
+    */
+    Logger::info("UplinkPacketizer TEMPORARILY DISABLED for FOTA testing");
 
     if (!scheduler_) {
         scheduler_ = new AcquisitionScheduler(adapter_, storage_, config_);
@@ -255,13 +271,56 @@ void EcoWattDevice::setup() {
         Logger::info("AcquisitionScheduler initialized with polling interval: %d ms", acq_conf.polling_interval_ms);
     }
 
+    if (!command_executor_) {
+        command_executor_ = new CommandExecutor(adapter_, config_, http_client_);
+        Logger::info("CommandExecutor initialized");
+    }
+
+    // RemoteConfigHandler RE-ENABLED after increasing loop stack to 16KB
     if (!remote_config_handler_) {
-        remote_config_handler_ = new RemoteConfigHandler(config_, http_client_);
+        remote_config_handler_ = new RemoteConfigHandler(config_, secure_http_, command_executor_);
         using namespace std::placeholders;
         remote_config_handler_->onConfigUpdate([this]() { onConfigUpdated(); });
-        remote_config_handler_->onCommand(std::bind(&EcoWattDevice::executeCommand, this, _1));
+        remote_config_handler_->onCommand([this](const CommandRequest& cmd) { onCommandReceived(cmd); });
         remote_config_handler_->begin(60000); // Check for new config every 60 seconds
-        Logger::info("RemoteConfigHandler initialized, check interval: 60 seconds");
+        Logger::info("RemoteConfigHandler initialized with security enabled, check interval: 60 seconds");
+    }
+
+    // Initialize FOTA Manager (after WiFi and Security)
+    if (!fota_) {
+        Logger::info("Initializing FOTA Manager...");
+        
+        // LittleFS is already initialized in main.ino setup()
+        // No need to re-initialize here
+        
+        // TEMPORARY: Clear boot count and FOTA state for fresh testing
+        if (LittleFS.exists("/boot_count.txt")) {
+            LittleFS.remove("/boot_count.txt");
+            Logger::info("[FOTA TEST] Cleared boot_count.txt for fresh test");
+        }
+        if (LittleFS.exists("/fota_state.json")) {
+            LittleFS.remove("/fota_state.json");
+            Logger::info("[FOTA TEST] Cleared fota_state.json for fresh test");
+        }
+        
+        fota_ = new FOTAManager(http_client_, security_, api_conf.inverter_base_url);
+        if (fota_->begin()) {
+            Logger::info("FOTA Manager initialized successfully");
+
+            // Report boot status to cloud
+            fota_->reportBootStatus();
+
+            // Check for firmware updates and start download immediately
+            if (fota_->checkForUpdate()) {
+                Logger::info("Firmware update available, starting download now");
+                // Start the download; chunk processing runs in fota_->loop()
+                if (!fota_->startDownload()) {
+                    Logger::error("FOTA Manager failed to start download");
+                }
+            }
+        } else {
+            Logger::error("Failed to initialize FOTA Manager");
+        }
     }
 
     // Perform a one-time write operation as part of Milestone 2 requirements.
@@ -282,8 +341,16 @@ void EcoWattDevice::loop() {
     printMemoryStats("MainLoop");
     if (storage_) storage_->loop();
     if (scheduler_) scheduler_->loop();
-    if (uplink_packetizer_) uplink_packetizer_->loop();
-    if (remote_config_handler_) remote_config_handler_->loop();
+    // TEMPORARILY DISABLED FOR FOTA TESTING
+    // if (uplink_packetizer_) uplink_packetizer_->loop();
+    if (remote_config_handler_) {
+        remote_config_handler_->loop();
+        // Also check for and execute commands
+        remote_config_handler_->checkForCommands();
+    }
+    if (fota_) {
+        fota_->loop(); // Process FOTA chunk downloads
+    }
     if (wifi_) wifi_->loop();
     // Other device logic...
 }

@@ -36,7 +36,7 @@ void ConfigManager::initializeDefaults() {
     modbus_config_.retry_delay_ms = 1000;
 
     // Hardcoded API config (inverter data accessed via api_key only)
-    api_config_.inverter_base_url = "http://20.15.114.131:8080";
+    api_config_.inverter_base_url = "http://10.50.126.183:8080";
     api_config_.read_endpoint = "/api/inverter/read";
     api_config_.write_endpoint = "/api/inverter/write";
     api_config_.config_endpoint = "/api/inverter/config";

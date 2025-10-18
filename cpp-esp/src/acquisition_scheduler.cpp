@@ -8,9 +8,10 @@
 #include "../include/logger.hpp"
 // --- Heap/Stack debug print helper ---
 static void printMemoryStats(const char* tag) {
-    Logger::info("[MEM] %s | Free heap: %u bytes | Min heap: %u bytes", tag, ESP.getFreeHeap(), ESP.getMinFreeHeap());
-    char dummy;
-    Logger::info("[MEM] %s | Stack ptr: %p", tag, &dummy);
+    // Temporarily disabled to prevent stack overflow during demo
+    // Logger::info("[MEM] %s | Free heap: %u bytes | Min heap: %u bytes", tag, ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    // char dummy;
+    // Logger::info("[MEM] %s | Stack ptr: %p", tag, &dummy);
 }
 
 AcquisitionScheduler* AcquisitionScheduler::instance_ = nullptr;

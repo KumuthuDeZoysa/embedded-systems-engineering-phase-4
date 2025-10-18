@@ -1,6 +1,7 @@
 # EcoWatt Cloud API (Flask Example) — 15s inactivity debounce (per device)
 
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import struct
 import datetime
 import threading
@@ -11,6 +12,7 @@ import base64
 import json
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # In-memory stores
 UPLOADS = []
@@ -37,9 +39,122 @@ FIRMWARE_CHUNKS = {}   # chunk_number -> {data, mac}
 FOTA_STATUS = {}       # device_id -> {chunk_received, verified, last_update}
 
 # -------- Security --------
-PRE_SHARED_KEY = b"EcoWatt_Secure_Key_2025"  # PSK for HMAC
-NONCE_STORE = {}  # device_id -> last_seen_nonce (anti-replay)
-ENCRYPTION_KEY = b"EcoWatt_AES_Key_32_Bytes_Long!!"  # 32 bytes for AES-256
+# MILESTONE 4 PART 3: Security Implementation
+SECURITY_ENABLED = True  # Security enabled with proper envelope wrapping
+PRE_SHARED_KEY = bytes.fromhex("c41716a134168f52fbd4be3302fa5a88127ddde749501a199607b4c286ad29b3")
+PSK = bytes.fromhex("c41716a134168f52fbd4be3302fa5a88127ddde749501a199607b4c286ad29b3")  # 256-bit PSK
+NONCE_STORE = {}  # device_id -> {'nonce': last_nonce, 'timestamp': last_seen_time}
+NONCE_WINDOW = 100  # Allow nonces within this window
+NONCE_EXPIRY_SECONDS = 75  # Clear nonces older than 75 seconds (allows device reboots during testing)
+SERVER_NONCE_COUNTER = 300  # Server nonce counter - start ahead of device's current ~204
+
+def create_secured_response(payload_dict, device_id=None):
+    """
+    Wrap response in secured envelope format.
+    Returns: {nonce, timestamp, encrypted, payload, mac}
+    """
+    global SERVER_NONCE_COUNTER
+    
+    # If we have device context, sync with device's nonce range
+    if device_id:
+        nonce_data = NONCE_STORE.get(device_id)
+        if nonce_data:
+            device_last_nonce = nonce_data['nonce']
+            # Keep response nonce within device's 100-nonce window
+            # For first-time devices (last_received_nonce=0), start very low
+            if device_last_nonce < 50:  # First-time communication
+                # For brand new devices, use nonce close to device's outgoing nonce
+                SERVER_NONCE_COUNTER = max(1, min(50, device_last_nonce + 1))
+            else:
+                # Use a nonce just ahead of device's last nonce (within window)
+                SERVER_NONCE_COUNTER = max(SERVER_NONCE_COUNTER, device_last_nonce + 1)
+        else:
+            # No previous communication, start with very low nonce for first contact
+            SERVER_NONCE_COUNTER = 1
+    else:
+        # No device context, ensure we don't go too high
+        if SERVER_NONCE_COUNTER > 50:
+            SERVER_NONCE_COUNTER = 1
+    
+    SERVER_NONCE_COUNTER += 1
+    nonce = SERVER_NONCE_COUNTER
+    timestamp = int(time.time())
+    encrypted = True  # Enable server-side encryption for demonstration
+    
+    # Convert payload to JSON string
+    payload_str = json.dumps(payload_dict)
+    
+    # If encryption enabled, encode payload as base64 (simulated encryption)
+    if encrypted:
+        payload_str = base64.b64encode(payload_str.encode()).decode()
+    
+    # Compute HMAC: nonce + timestamp + encrypted_flag + payload
+    hmac_input = f"{nonce}{timestamp}{'1' if encrypted else '0'}{payload_str}"
+    mac = hmac.new(PSK, hmac_input.encode(), hashlib.sha256).hexdigest()
+    
+    return {
+        'nonce': nonce,
+        'timestamp': timestamp,
+        'encrypted': encrypted,
+        'payload': payload_str,
+        'mac': mac
+    }
+
+def verify_request_security(device_id):
+    """
+    Verify security headers (X-Nonce, X-Timestamp, X-MAC) for GET requests.
+    Returns (success: bool, error_message: str)
+    """
+    if not SECURITY_ENABLED:
+        return True, None
+    
+    # Get security headers
+    nonce = request.headers.get('X-Nonce')
+    timestamp = request.headers.get('X-Timestamp')
+    received_mac = request.headers.get('X-MAC')
+    
+    if not nonce or not timestamp or not received_mac:
+        msg = f"Missing security headers: nonce={nonce}, ts={timestamp}, mac={received_mac}"
+        log_security_event(device_id, 'missing_headers', msg)
+        return False, msg
+    
+    try:
+        nonce_int = int(nonce)
+    except ValueError:
+        msg = f"Invalid nonce format: {nonce}"
+        log_security_event(device_id, 'invalid_nonce', msg)
+        return False, msg
+    
+    # Check nonce for replay protection with expiry handling
+    current_time = time.time()
+    nonce_data = NONCE_STORE.get(device_id)
+    
+    if nonce_data:
+        last_nonce = nonce_data['nonce']
+        last_seen = nonce_data['timestamp']
+        
+        # If nonce is old (device likely rebooted), clear it
+        if (current_time - last_seen) > NONCE_EXPIRY_SECONDS:
+            print(f"[SECURITY] Clearing expired nonce for {device_id} (age: {current_time - last_seen:.0f}s)")
+            NONCE_STORE.pop(device_id, None)
+        elif nonce_int <= last_nonce:
+            msg = f"Replay attack detected: nonce {nonce_int} <= {last_nonce}"
+            log_security_event(device_id, 'replay_attack', msg)
+            return False, msg
+    
+    # Verify HMAC: endpoint + nonce + timestamp
+    hmac_input = request.path + nonce + timestamp
+    calculated_mac = hmac.new(PSK, hmac_input.encode(), hashlib.sha256).hexdigest()
+    
+    if not hmac.compare_digest(calculated_mac, received_mac):
+        msg = f"HMAC verification failed"
+        log_security_event(device_id, 'hmac_failed', msg)
+        return False, msg
+    
+    # Update nonce with timestamp
+    NONCE_STORE[device_id] = {'nonce': nonce_int, 'timestamp': current_time}
+    log_security_event(device_id, 'hmac_verified', f"Nonce: {nonce_int}")
+    return True, None
 
 # -------- Logging --------
 SECURITY_LOGS = []  # Security events (HMAC failures, replay attacks, etc.)
@@ -223,9 +338,55 @@ def decompress_delta_payload(data: bytes):
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    # Authentication removed for testing
-    compressed_payload = request.data
     device_id = request.headers.get('device-id') or request.headers.get('Device-ID') or 'Unknown-Device'
+    
+    # Check if this is a secured request (JSON envelope)
+    content_type = request.headers.get('Content-Type', '')
+    if 'application/json' in content_type and SECURITY_ENABLED:
+        try:
+            # Parse secured envelope
+            envelope = request.get_json(force=True)
+            if 'payload' in envelope and 'nonce' in envelope and 'mac' in envelope:
+                print(f"[DEBUG] /api/upload: Received secured envelope from {device_id}")
+                
+                # Verify MAC
+                payload_str = envelope['payload']
+                received_mac = envelope['mac']
+                nonce = envelope['nonce']
+                timestamp = envelope.get('timestamp', 0)
+                encrypted_flag = envelope.get('encrypted', False)
+                
+                # Verify HMAC (must match ESP32: nonce + timestamp + encrypted + payload)
+                hmac_input = f"{nonce}{timestamp}{'1' if encrypted_flag else '0'}{payload_str}"
+                calculated_mac = hmac.new(PSK, hmac_input.encode(), hashlib.sha256).hexdigest()
+                
+                if not hmac.compare_digest(calculated_mac, received_mac):
+                    log_security_event(device_id, 'hmac_failed', f"Upload HMAC mismatch")
+                    return jsonify({'error': 'Unauthorized', 'details': 'HMAC verification failed'}), 401
+                
+                # Check nonce
+                last_nonce = NONCE_STORE.get(device_id, 0)
+                if nonce <= last_nonce:
+                    log_security_event(device_id, 'replay_attack', f'Upload nonce {nonce} <= {last_nonce}')
+                    return jsonify({'error': 'Unauthorized', 'details': 'Replay attack detected'}), 401
+                
+                NONCE_STORE[device_id] = nonce
+                log_security_event(device_id, 'hmac_verified', f"Upload authenticated, nonce: {nonce}")
+                
+                # Decode payload (base64-encoded binary data)
+                try:
+                    compressed_payload = base64.b64decode(payload_str)
+                except Exception as e:
+                    return jsonify({'error': 'Invalid payload encoding'}), 400
+            else:
+                compressed_payload = request.data
+        except Exception as e:
+            print(f"[ERROR] /api/upload: Failed to parse secured envelope: {e}")
+            compressed_payload = request.data
+    else:
+        # Plain binary upload (legacy)
+        compressed_payload = request.data
+    
     print(f"[DEBUG] /api/upload called: device_id={device_id}, payload_bytes={len(compressed_payload)}")
 
     try:
@@ -397,13 +558,43 @@ def get_device_config():
     """
     device_id = request.headers.get('Device-ID') or request.args.get('device_id') or 'EcoWatt001'
     
+    print(f"[DEBUG] /api/inverter/config called by device: {device_id}")
+    print(f"[DEBUG] Headers: X-Nonce={request.headers.get('X-Nonce')}, X-Timestamp={request.headers.get('X-Timestamp')}, X-MAC={request.headers.get('X-MAC')}")
+    
+    # Verify security
+    success, error_msg = verify_request_security(device_id)
+    if not success:
+        print(f"[CONFIG] Security verification failed for {device_id}: {error_msg}")
+        return jsonify({'error': 'Unauthorized', 'details': error_msg}), 401
+    
     pending = PENDING_CONFIGS.get(device_id)
     if pending:
         print(f"[CONFIG] Sending pending config to {device_id}: {pending}")
-        return jsonify(pending)
+        
+        # Wrap in secured envelope if security enabled
+        if SECURITY_ENABLED:
+            response = create_secured_response(pending, device_id)
+            print(f"[DEBUG] Secured response: {response}")
+            return jsonify(response)
+        else:
+            return jsonify(pending)
     
-    # No pending config
-    return jsonify({})
+    # No pending config - return empty response (also wrapped if security enabled)
+    print(f"[CONFIG] No pending config for {device_id}")
+    if SECURITY_ENABLED:
+        # Send a proper "no config" structure that the device can parse
+        global SERVER_NONCE_COUNTER
+        SERVER_NONCE_COUNTER += 1
+        empty_payload = {
+            "status": "no_config",
+            "nonce": SERVER_NONCE_COUNTER,
+            "message": "No pending configuration updates"
+        }
+        response = create_secured_response(empty_payload, device_id)
+        print(f"[DEBUG] Empty secured response: {response}")
+        return jsonify(response)
+    else:
+        return jsonify({"status": "no_config", "message": "No pending configuration updates"})
 
 @app.route('/api/inverter/config/ack', methods=['POST'])
 def receive_config_ack():
@@ -411,7 +602,36 @@ def receive_config_ack():
     Device sends acknowledgment after processing config update.
     Format: {nonce, timestamp, all_success, config_ack: {accepted, rejected, unchanged}}
     """
-    ack = request.get_json(force=True)
+    # Check if this is a secured request
+    content_type = request.headers.get('Content-Type', '')
+    if 'application/json' in content_type and SECURITY_ENABLED:
+        try:
+            envelope = request.get_json(force=True)
+            if 'payload' in envelope and 'nonce' in envelope and 'mac' in envelope:
+                # Extract and verify
+                payload_str = envelope['payload']
+                received_mac = envelope['mac']
+                nonce = envelope['nonce']
+                timestamp = envelope.get('timestamp', 0)
+                encrypted_flag = envelope.get('encrypted', False)
+                
+                # Verify HMAC
+                hmac_input = f"{nonce}{timestamp}{'1' if encrypted_flag else '0'}{payload_str}"
+                calculated_mac = hmac.new(PSK, hmac_input.encode(), hashlib.sha256).hexdigest()
+                
+                if not hmac.compare_digest(calculated_mac, received_mac):
+                    return jsonify({'error': 'Unauthorized', 'details': 'HMAC verification failed'}), 401
+                
+                # Parse payload
+                ack = json.loads(payload_str)
+            else:
+                ack = request.get_json(force=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to parse secured ack: {e}")
+            ack = request.get_json(force=True)
+    else:
+        ack = request.get_json(force=True)
+    
     device_id = request.headers.get('Device-ID') or 'EcoWatt001'
     
     # Store acknowledgment
@@ -439,7 +659,12 @@ def receive_config_ack():
     print(f"[CONFIG ACK] Received from {device_id}: all_success={ack.get('all_success')}")
     print(f"[CONFIG ACK] Accepted: {len(history_entry['accepted'])}, Rejected: {len(history_entry['rejected'])}, Unchanged: {len(history_entry['unchanged'])}")
     
-    return jsonify({'status': 'success', 'message': 'Acknowledgment received'})
+    # Return secured response
+    response_data = {'status': 'success', 'message': 'Acknowledgment received'}
+    if SECURITY_ENABLED:
+        return jsonify(create_secured_response(response_data))
+    else:
+        return jsonify(response_data)
 
 @app.route('/api/cloud/config/send', methods=['POST'])
 def send_config_update():
@@ -452,8 +677,10 @@ def send_config_update():
     sampling_interval = req.get('sampling_interval')
     registers = req.get('registers', [])
     
-    # Generate nonce
-    nonce = int(time.time() * 1000)
+    # Generate nonce - use device-compatible range
+    global SERVER_NONCE_COUNTER
+    SERVER_NONCE_COUNTER += 1
+    nonce = SERVER_NONCE_COUNTER
     
     # Build config update message
     config_update = {}
@@ -1014,6 +1241,32 @@ def log_command_event(device_id, event_type, details):
         'details': details
     })
     print(f"[COMMAND] {device_id}: {event_type} - {details}")
+
+# ============ SECURITY MONITORING ENDPOINTS ============
+
+@app.route('/api/cloud/status', methods=['GET'])
+def get_server_status():
+    """
+    Get current server security status and configuration.
+    """
+    return jsonify({
+        'security_enabled': SECURITY_ENABLED,
+        'nonce_window': NONCE_WINDOW,
+        'nonce_expiry_seconds': NONCE_EXPIRY_SECONDS,
+        'device_nonces': {k: v['nonce'] for k, v in NONCE_STORE.items()},
+        'server_nonce_counter': SERVER_NONCE_COUNTER,
+        'total_security_events': len(SECURITY_LOGS),
+        'total_devices_active': len(NONCE_STORE)
+    })
+
+@app.route('/api/cloud/security/clear', methods=['POST'])
+def clear_security_logs():
+    """
+    Clear security logs (for demo purposes).
+    """
+    global SECURITY_LOGS
+    SECURITY_LOGS = []
+    return jsonify({'status': 'success', 'message': 'Security logs cleared'})
 
 # ---------------- Startup ----------------
 

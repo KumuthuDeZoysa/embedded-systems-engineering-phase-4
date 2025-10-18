@@ -2,14 +2,16 @@
 #pragma once
 #include "data_storage.hpp"
 #include "http_client.hpp"
+#include "secure_http_client.hpp"
 
 class EcoHttpClient;
+class SecureHttpClient;
 
 #include "ticker_fallback.hpp"
 
 class UplinkPacketizer {
 public:
-    UplinkPacketizer(DataStorage* storage, EcoHttpClient* http);
+    UplinkPacketizer(DataStorage* storage, SecureHttpClient* secure_http);
     ~UplinkPacketizer();
 
     void begin(uint32_t interval_ms = 60000);
@@ -24,7 +26,7 @@ private:
          std::string cloudUrl_;
     bool running_ = false;
     DataStorage* storage_ = nullptr;
-        EcoHttpClient* http_ = nullptr;
+    SecureHttpClient* secure_http_ = nullptr;
     void uploadTask();
     static void uploadTaskWrapper();
     static UplinkPacketizer* instance_;

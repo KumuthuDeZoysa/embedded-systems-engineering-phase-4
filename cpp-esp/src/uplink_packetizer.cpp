@@ -35,10 +35,10 @@ static std::string bufToHex(const char* buf, size_t len) {
 
 UplinkPacketizer* UplinkPacketizer::instance_ = nullptr;
 
-UplinkPacketizer::UplinkPacketizer(DataStorage* storage, EcoHttpClient* http)
+UplinkPacketizer::UplinkPacketizer(DataStorage* storage, SecureHttpClient* secure_http)
     : uploadTicker_(uploadTaskWrapper, 60000),
       storage_(storage),
-      http_(http) {
+      secure_http_(secure_http) {
     instance_ = this;
 }
 
@@ -162,28 +162,36 @@ void UplinkPacketizer::uploadTask() {
     Logger::info("[Uplink] Lossless recovery verification: %s", lossless ? "PASS" : "FAIL");
 
     // --- Aggregation (min/avg/max) ---
-    float minVal = sampleBuf[0].value, maxVal = sampleBuf[0].value, sumVal = 0.0f;
-    for (size_t i = 0; i < sampleCount; ++i) {
-        float v = sampleBuf[i].value;
-        if (v < minVal) minVal = v;
-        if (v > maxVal) maxVal = v;
-        sumVal += v;
+    float minVal = 0.0f, maxVal = 0.0f, sumVal = 0.0f;
+    if (sampleCount > 0) {
+        minVal = sampleBuf[0].value;
+        maxVal = sampleBuf[0].value;
+        for (size_t i = 0; i < sampleCount; ++i) {
+            float v = sampleBuf[i].value;
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+            sumVal += v;
+        }
     }
-    float avgVal = sumVal / sampleCount;
+    float avgVal = (sampleCount > 0) ? (sumVal / static_cast<float>(sampleCount)) : 0.0f;
 
     // --- Benchmark Metadata ---
+    size_t original_size = sampleCount * sizeof(Sample);
+    float compression_ratio = (original_size > 0) ? (static_cast<float>(compLen) / static_cast<float>(original_size)) : 0.0f;
+    
     std::string benchmarkJson = "{";
     benchmarkJson += "\"compression_method\": \"delta/time-series\",";
     benchmarkJson += "\"num_samples\": " + std::to_string(sampleCount) + ",";
-    benchmarkJson += "\"original_size\": " + std::to_string(sampleCount * sizeof(Sample)) + ",";
+    benchmarkJson += "\"original_size\": " + std::to_string(original_size) + ",";
     benchmarkJson += "\"compressed_size\": " + std::to_string(compLen) + ",";
-    benchmarkJson += "\"compression_ratio\": " + std::to_string((float)compLen / (sampleCount * sizeof(Sample))) + ",";
+    benchmarkJson += "\"compression_ratio\": " + std::to_string(compression_ratio) + ",";
     benchmarkJson += "\"cpu_time_ms\": " + std::to_string(cpu_time) + ",";
     benchmarkJson += "\"lossless\": " + std::string(lossless ? "true" : "false") + ",";
     benchmarkJson += "\"min\": " + std::to_string(minVal) + ",";
     benchmarkJson += "\"avg\": " + std::to_string(avgVal) + ",";
     benchmarkJson += "\"max\": " + std::to_string(maxVal) + "}";
-    Logger::info("[Uplink] Benchmark: %s", benchmarkJson.c_str());
+    // Avoid logging full JSON to prevent stack issues
+    Logger::info("[Uplink] Benchmark metadata created (%u bytes)", benchmarkJson.length());
 
     // 3) Encrypt (stub) — keep buffer >= compLen
     char* encrypted = static_cast<char*>(malloc(compLen));
@@ -210,13 +218,18 @@ void UplinkPacketizer::uploadTask() {
     computeMAC(encrypted, encLen, mac, MAC_MAX, macLen);
 
 
-    // First, upload benchmark metadata as JSON
-    if (http_ && !cloudUrl_.empty()) {
-    EcoHttpResponse metaResp = http_->post((cloudUrl_ + "/meta").c_str(), benchmarkJson.c_str(), strlen(benchmarkJson.c_str()), "application/json");
+    // First, upload benchmark metadata as JSON (using plain HTTP, no security needed for metadata)
+    if (secure_http_ && !cloudUrl_.empty()) {
+        EcoHttpClient* plain_http = secure_http_->getHttpClient();
+        EcoHttpResponse metaResp = plain_http->post((cloudUrl_ + "/meta").c_str(), 
+                                                     benchmarkJson.c_str(), 
+                                                     benchmarkJson.length(),
+                                                     "application/json");
         Logger::info("[Uplink] Benchmark metadata upload status: %d", metaResp.status_code);
     }
-    Logger::info("[Uplink] Upload payload (%u bytes): %s",
-                 (unsigned)encLen, bufToHex(encrypted, encLen).c_str());
+    // Log only first few bytes to avoid stack overflow
+    Logger::info("[Uplink] Upload payload (%u bytes): %s...",
+                 (unsigned)encLen, bufToHex(encrypted, encLen < 8 ? encLen : 8).c_str());
     (void)chunkAndUpload(encrypted, encLen);
 
     free(sampleBuf);
@@ -252,8 +265,8 @@ void UplinkPacketizer::computeMAC(const char* /*inBuf*/, size_t inLen,
 bool UplinkPacketizer::chunkAndUpload(const char* data, size_t len) {
     Logger::debug("chunkAndUpload called: len=%u", (unsigned)len);
 
-    if (!http_ || cloudUrl_.empty()) {
-        Logger::warn("chunkAndUpload: http_ or cloudUrl_ not set");
+    if (!secure_http_ || cloudUrl_.empty()) {
+        Logger::warn("chunkAndUpload: secure_http_ or cloudUrl_ not set");
         return false;
     }
 
@@ -271,8 +284,10 @@ bool UplinkPacketizer::chunkAndUpload(const char* data, size_t len) {
                      cloudUrl_.c_str(), (unsigned)offset, (unsigned)thisChunk);
 
         while (attempt < MAX_RETRIES && !success) {
-            EcoHttpResponse resp =
-                http_->post(cloudUrl_.c_str(), data + offset, thisChunk, "application/octet-stream");
+            // Convert binary chunk to string for SecureHttpClient
+            std::string chunk_data(data + offset, thisChunk);
+            std::string plain_response;
+            EcoHttpResponse resp = secure_http_->securePost(cloudUrl_.c_str(), chunk_data, plain_response);
             Logger::debug("[Uplink] Attempt %d: status_code=%d, success=%d",
                           attempt + 1, resp.status_code, resp.isSuccess());
             success = resp.isSuccess();
