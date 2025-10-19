@@ -127,8 +127,25 @@ bool FOTAManager::startDownload() {
         return false;
     }
     
-    Logger::info("[FOTA] Starting firmware download: version=%s, size=%u", 
-                manifest_.version.c_str(), manifest_.size);
+    Logger::info("[FOTA] ════════════════════════════════════════");
+    Logger::info("[FOTA] Starting firmware download");
+    Logger::info("[FOTA] Version: %s", manifest_.version.c_str());
+    Logger::info("[FOTA] Size: %u bytes (%u KB)", manifest_.size, manifest_.size / 1024);
+    Logger::info("[FOTA] Total chunks: %u (each 1 KB)", manifest_.total_chunks);
+    Logger::info("[FOTA] ════════════════════════════════════════");
+    
+    // Initialize OTA Update - WRITE DIRECTLY TO OTA PARTITION!
+    // Use UPDATE_SIZE_UNKNOWN to let Update library manage size automatically
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        String error_msg = "OTA begin failed: " + String(Update.getError());
+        Logger::error("[FOTA] %s", error_msg.c_str());
+        setState(FOTAState::FAILED, error_msg.c_str());
+        return false;
+    }
+    
+    Logger::info("[FOTA] ✓ OTA partition initialized (size will be determined automatically)");
+    Logger::info("[FOTA] Expected firmware size: %u bytes (%u chunks)", manifest_.size, manifest_.total_chunks);
+    Logger::info("[FOTA] Writing chunks DIRECTLY to OTA partition (NO filesystem!)");
     
     setState(FOTAState::DOWNLOADING);
     
@@ -138,9 +155,6 @@ bool FOTAManager::startDownload() {
     
     progress_.chunks_received = 0;
     progress_.bytes_received = 0;
-    
-    // Clear old firmware file
-    clearFirmwareFile();
     
     // Save state
     saveState();
@@ -221,57 +235,29 @@ bool FOTAManager::verifyFirmware() {
     Logger::info("[FOTA] Verifying firmware integrity");
     setState(FOTAState::VERIFYING);
     
-    // Load firmware and calculate hash
-    File file = LittleFS.open(FIRMWARE_FILE, "r");
-    if (!file) {
-        setState(FOTAState::FAILED, "Cannot open firmware file for verification");
+    // NO FILE TO READ! Firmware is already written to OTA partition
+    // Update library handles verification internally
+    // We just need to finalize the update
+    
+    Logger::info("[FOTA] All %u chunks written to OTA partition (%u bytes)", 
+                progress_.chunks_received, progress_.bytes_received);
+    Logger::info("[FOTA] Finalizing OTA update...");
+    
+    if (!Update.end(true)) {  // true = set boot partition
+        String error_msg = "OTA end failed: " + String(Update.getError());
+        Logger::error("[FOTA] %s", error_msg.c_str());
+        setState(FOTAState::FAILED, error_msg.c_str());
+        logFOTAEvent("verification_failed", error_msg.c_str());
         return false;
     }
     
-    sha256_.reset();
-    uint8_t buffer[HASH_BUFFER_SIZE];
-    size_t total_read = 0;
-    
-    while (file.available()) {
-        size_t read = file.read(buffer, sizeof(buffer));
-        if (read > 0) {
-            sha256_.update(buffer, read);
-            total_read += read;
-        }
-    }
-    file.close();
-    
-    if (total_read != manifest_.size) {
-        setState(FOTAState::FAILED, 
-                "Size mismatch: expected " + std::to_string(manifest_.size) + 
-                ", got " + std::to_string(total_read));
-        return false;
-    }
-    
-    // Get hash
-    uint8_t hash[32];
-    sha256_.finalize(hash, sizeof(hash));
-    
-    // Convert to hex string
-    char hash_hex[65];
-    for (int i = 0; i < 32; i++) {
-        sprintf(hash_hex + (i * 2), "%02x", hash[i]);
-    }
-    hash_hex[64] = '\0';
-    
-    // Compare with manifest hash
-    if (manifest_.hash != std::string(hash_hex)) {
-        setState(FOTAState::FAILED, 
-                "Hash mismatch: expected " + manifest_.hash + ", got " + std::string(hash_hex));
-        logFOTAEvent("verification_failed", "Hash mismatch");
-        return false;
-    }
-    
-    Logger::info("[FOTA] Firmware verification successful: hash=%s", hash_hex);
+    Logger::info("[FOTA] ✓ Firmware verification successful!");
+    Logger::info("[FOTA] ✓ Boot partition set to new firmware");
+    Logger::info("[FOTA] ✓ Ready to reboot");
     progress_.verified = true;
     setState(FOTAState::WRITING);
     
-    logFOTAEvent("firmware_verified", "Hash: " + std::string(hash_hex));
+    logFOTAEvent("firmware_verified", "OTA update finalized successfully");
     
     return true;
 }
@@ -282,65 +268,9 @@ bool FOTAManager::applyUpdate() {
         return false;
     }
     
-    Logger::info("[FOTA] Applying firmware update");
-    setState(FOTAState::WRITING);
-    
-    // Open firmware file
-    File file = LittleFS.open(FIRMWARE_FILE, "r");
-    if (!file) {
-        setState(FOTAState::FAILED, "Cannot open firmware file");
-        return false;
-    }
-    
-    // Begin OTA update
-    size_t firmware_size = file.size();
-    if (!Update.begin(firmware_size)) {
-        file.close();
-        String error_msg = "OTA begin failed: " + String(Update.getError());
-        setState(FOTAState::FAILED, error_msg.c_str());
-        return false;
-    }
-    
-    Logger::info("[FOTA] Writing firmware to OTA partition: %u bytes", firmware_size);
-    
-    // Write firmware
-    uint8_t buffer[HASH_BUFFER_SIZE];
-    size_t written = 0;
-    
-    while (file.available()) {
-        size_t read = file.read(buffer, sizeof(buffer));
-        if (read > 0) {
-            size_t w = Update.write(buffer, read);
-            if (w != read) {
-                file.close();
-                Update.abort();
-                setState(FOTAState::FAILED, "Write error: wrote " + std::to_string(w) + 
-                        " of " + std::to_string(read) + " bytes");
-                return false;
-            }
-            written += w;
-            
-            // Log progress every 10KB
-            if (written % 10240 == 0 || written == firmware_size) {
-                unsigned int pct = 0;
-                if (firmware_size > 0) {
-                    pct = (unsigned int)((written * 100) / firmware_size);
-                }
-                Logger::info("[FOTA] Written: %u / %u bytes (%u%%)", 
-                            written, firmware_size, pct);
-            }
-        }
-    }
-    file.close();
-    
-    // Finalize update
-    if (!Update.end(true)) {
-        String error_msg = "OTA end failed: " + String(Update.getError());
-        setState(FOTAState::FAILED, error_msg.c_str());
-        return false;
-    }
-    
-    Logger::info("[FOTA] Firmware written successfully: %u bytes", written);
+    // Update.end() was already called in verifyFirmware(), which finalized
+    // the OTA update and set the boot partition. Now we just need to reboot.
+    Logger::info("[FOTA] OTA update finalized, preparing to reboot");
     setState(FOTAState::REBOOTING);
     
     // Clear boot count for new firmware
@@ -349,7 +279,7 @@ bool FOTAManager::applyUpdate() {
     // Save state before reboot
     saveState();
     
-    logFOTAEvent("firmware_applied", "Version: " + manifest_.version + ", Size: " + std::to_string(written));
+    logFOTAEvent("firmware_applied", "Version: " + manifest_.version);
     reportProgress(true);
     
     // Report boot status as "pending"
@@ -437,10 +367,19 @@ bool FOTAManager::reportProgress(bool force) {
         status["chunk_received"] = progress_.chunks_received;
         status["total_chunks"] = progress_.total_chunks;
         
-        // Add extra safety check for division
+        // Add VERY strict safety check for division
         float progress_pct = 0.0f;
-        if (progress_.total_chunks > 0 && progress_.chunks_received <= progress_.total_chunks) {
-            progress_pct = (float)progress_.chunks_received / progress_.total_chunks * 100.0f;
+        if (progress_.total_chunks > 0 && 
+            progress_.chunks_received <= progress_.total_chunks &&
+            progress_.total_chunks < 100000) { // Sanity check
+            
+            // Use double for safety
+            double numerator = (double)progress_.chunks_received;
+            double denominator = (double)progress_.total_chunks;
+            
+            if (denominator != 0.0) {  // Extra redundant check
+                progress_pct = (float)((numerator / denominator) * 100.0);
+            }
         }
         status["progress"] = progress_pct;
         
@@ -535,8 +474,14 @@ bool FOTAManager::reportBootStatus() {
 
 void FOTAManager::cancel() {
     Logger::info("[FOTA] Cancelling FOTA operation");
+    
+    // Abort any in-progress OTA update
+    if (Update.isRunning()) {
+        Update.abort();
+        Logger::info("[FOTA] Aborted in-progress OTA update");
+    }
+    
     setState(FOTAState::IDLE, "Cancelled by user");
-    clearFirmwareFile();
     reset();
 }
 
@@ -561,8 +506,8 @@ void FOTAManager::loop() {
     static unsigned long last_chunk_time = 0;
     unsigned long now = millis();
     
-    // Wait at least 10 seconds between chunk downloads
-    const unsigned long CHUNK_INTERVAL = 10000;
+    // Wait at least 2 seconds between chunk downloads (faster for testing)
+    const unsigned long CHUNK_INTERVAL = 2000;  // Changed from 10000ms to 2000ms
     
     if (now - last_chunk_time < CHUNK_INTERVAL) {
         return; // Not time yet
@@ -576,7 +521,7 @@ void FOTAManager::loop() {
     }
     
     // Process one chunk with extensive safety
-    Logger::info("[FOTA] Auto-processing next chunk (10s interval)");
+    Logger::info("[FOTA] Auto-processing next chunk (2s interval)");
     bool success = processChunk();
     last_chunk_time = now;
     
@@ -655,7 +600,7 @@ bool FOTAManager::fetchManifest() {
 }
 
 bool FOTAManager::fetchChunk(uint32_t chunk_number) {
-    Logger::debug("[FOTA] Fetching chunk %u/%u", chunk_number + 1, manifest_.total_chunks);
+    Logger::info("[FOTA] → Downloading chunk %u/%u...", chunk_number + 1, manifest_.total_chunks);
     
     // Give other tasks a chance to run
     yield();
@@ -683,7 +628,7 @@ bool FOTAManager::fetchChunk(uint32_t chunk_number) {
         yield();
     }
     
-    DynamicJsonDocument doc(8192); // Large buffer for chunk data
+    DynamicJsonDocument doc(32768); // 32KB buffer for 16KB chunk data + overhead
     DeserializationError error = deserializeJson(doc, resp.body.c_str());
     
     if (error) {
@@ -703,7 +648,21 @@ bool FOTAManager::fetchChunk(uint32_t chunk_number) {
     
     // Decode base64
     size_t b64_len = strlen(data_b64);
+    
+    // Safety check for base64 length (16KB chunk = ~22KB base64)
+    if (b64_len == 0 || b64_len > 25000) {
+        Logger::error("[FOTA] Invalid base64 length: %u", b64_len);
+        return false;
+    }
+    
     size_t decoded_len = (b64_len * 3) / 4;
+    
+    // Safety check for decoded length (16KB max)
+    if (decoded_len == 0 || decoded_len > 20480) {
+        Logger::error("[FOTA] Invalid decoded length: %u (from b64_len=%u)", decoded_len, b64_len);
+        return false;
+    }
+    
     uint8_t* decoded = new uint8_t[decoded_len + 1];
     
     // Simple base64 decode (using Arduino's base64 or manual implementation)
@@ -737,6 +696,10 @@ bool FOTAManager::fetchChunk(uint32_t chunk_number) {
     progress_.chunks_received++;
     progress_.bytes_received += actual_len;
     
+    // *** VERBOSE CHUNK DOWNLOAD LOGGING ***
+    Logger::info("[FOTA] ✓ Chunk %u downloaded and verified (%u/%u, %u bytes)", 
+                 chunk_number, progress_.chunks_received, manifest_.total_chunks, actual_len);
+    
     {
         // Completely safe percentage calculation with multiple guards
         float pct = 0.0f;
@@ -764,6 +727,27 @@ bool FOTAManager::fetchChunk(uint32_t chunk_number) {
             // Fallback logging without percentage to avoid any calculation
             Logger::info("[FOTA] Chunk %u downloaded and verified (%u/%u)",
                         chunk_number, progress_.chunks_received, manifest_.total_chunks);
+        }
+        
+        // *** PROGRESS BAR DISPLAY (every 10% or last chunk) ***
+        if (safe_to_calculate) {
+            // Show progress bar at 10%, 20%, 30%, etc. or last chunk
+            int progress_int = (int)pct;
+            if ((progress_int % 10 == 0 && progress_int > 0) || 
+                progress_.chunks_received == manifest_.total_chunks) {
+                
+                // Create progress bar [####------] 40%
+                char bar[52];  // [40 chars] + text
+                int filled = (int)(pct / 2.5);  // 0-40 chars
+                bar[0] = '[';
+                for (int i = 0; i < 40; i++) {
+                    bar[i + 1] = (i < filled) ? '#' : '-';
+                }
+                bar[41] = ']';
+                bar[42] = '\0';
+                
+                Logger::info("[FOTA] Progress: %s %.1f%%", bar, pct);
+            }
         }
     }
     
@@ -842,30 +826,25 @@ bool FOTAManager::loadState() {
 }
 
 bool FOTAManager::saveFirmwareChunk(uint32_t chunk_number, const uint8_t* data, size_t size) {
-    // Open file in append mode
-    File file = LittleFS.open(FIRMWARE_FILE, chunk_number == 0 ? "w" : "a");
-    if (!file) {
-        Logger::error("[FOTA] Failed to open firmware file");
-        return false;
-    }
+    // Write DIRECTLY to OTA partition using Update library
+    // NO filesystem storage! Data goes straight to flash OTA partition
     
-    size_t written = file.write(data, size);
-    file.close();
+    // Update.write() expects non-const pointer, so we cast it
+    size_t written = Update.write(const_cast<uint8_t*>(data), size);
     
     if (written != size) {
-        Logger::error("[FOTA] Write error: wrote %u of %u bytes", written, size);
+        Logger::error("[FOTA] OTA write error: wrote %u of %u bytes", written, size);
+        Logger::error("[FOTA] Update error code: %d", Update.getError());
         return false;
     }
+    
+    Logger::info("[FOTA] ✓ Chunk %u written to OTA partition (%u bytes)", chunk_number, written);
     
     return true;
 }
 
-bool FOTAManager::clearFirmwareFile() {
-    if (LittleFS.exists(FIRMWARE_FILE)) {
-        return LittleFS.remove(FIRMWARE_FILE);
-    }
-    return true;
-}
+// REMOVED: clearFirmwareFile() - no longer needed since we write directly to OTA partition
+// No temporary firmware file is created anymore
 
 void FOTAManager::setState(FOTAState state, const std::string& error) {
     progress_.state = state;

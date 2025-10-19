@@ -1146,6 +1146,73 @@ def get_fota_status():
         'device_status': FOTA_STATUS
     })
 
+@app.route('/api/cloud/fota/rollback', methods=['POST'])
+def trigger_fota_rollback():
+    """
+    Trigger FOTA rollback on device.
+    
+    Request body:
+    {
+        "device_id": "optional_device_id",
+        "reason": "Reason for rollback"
+    }
+    """
+    data = request.get_json()
+    device_id = data.get('device_id', 'all')
+    reason = data.get('reason', 'Manual rollback requested')
+    
+    # Log rollback request
+    log_entry = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'device_id': device_id,
+        'action': 'rollback_requested',
+        'reason': reason
+    }
+    FOTA_LOGS.append(log_entry)
+    
+    print(f"\n[FOTA ROLLBACK] Device: {device_id}")
+    print(f"[FOTA ROLLBACK] Reason: {reason}")
+    print(f"[FOTA ROLLBACK] Time: {log_entry['timestamp']}")
+    
+    # Store rollback flag for device to check on next status poll
+    if device_id not in FOTA_STATUS:
+        FOTA_STATUS[device_id] = {}
+    
+    FOTA_STATUS[device_id]['rollback_requested'] = True
+    FOTA_STATUS[device_id]['rollback_reason'] = reason
+    FOTA_STATUS[device_id]['rollback_timestamp'] = log_entry['timestamp']
+    
+    return jsonify({
+        'success': True,
+        'message': f'Rollback requested for device: {device_id}',
+        'device_id': device_id,
+        'reason': reason
+    })
+
+@app.route('/api/inverter/fota/rollback-status', methods=['GET'])
+def check_rollback_status():
+    """
+    Device checks if rollback has been requested.
+    Returns rollback flag if set.
+    """
+    device_id = request.headers.get('Device-ID', 'unknown')
+    
+    if device_id in FOTA_STATUS and FOTA_STATUS[device_id].get('rollback_requested'):
+        # Clear the flag after sending
+        rollback_reason = FOTA_STATUS[device_id].get('rollback_reason', 'Unknown')
+        FOTA_STATUS[device_id]['rollback_requested'] = False
+        
+        print(f"[FOTA] Rollback flag sent to device: {device_id}")
+        
+        return jsonify({
+            'rollback_required': True,
+            'reason': rollback_reason
+        })
+    
+    return jsonify({
+        'rollback_required': False
+    })
+
 # ============ LOGGING ENDPOINTS ============
 
 @app.route('/api/cloud/logs/security', methods=['GET'])

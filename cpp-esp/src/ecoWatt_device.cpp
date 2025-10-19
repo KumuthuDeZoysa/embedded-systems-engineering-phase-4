@@ -315,7 +315,9 @@ void EcoWattDevice::setup() {
             Logger::info("[FOTA TEST] Cleared fota_state.json for fresh test");
         }
         
-        fota_ = new FOTAManager(http_client_, security_, api_conf.inverter_base_url);
+        // FOTA uses cloud HTTP client - FOTA endpoints are on cloud server (10.52.180.183)
+        EcoHttpClient* cloud_http_for_fota = new EcoHttpClient(api_conf.upload_base_url, mbc.timeout_ms);
+        fota_ = new FOTAManager(cloud_http_for_fota, security_, api_conf.upload_base_url);
         if (fota_->begin()) {
             Logger::info("FOTA Manager initialized successfully");
 

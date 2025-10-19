@@ -1,6 +1,6 @@
 {
   "EcoWatt001": {
-    "nonce": 26,
+    "nonce": 301,
     "config_update": {
       "sampling_interval": 22,
       "registers": [

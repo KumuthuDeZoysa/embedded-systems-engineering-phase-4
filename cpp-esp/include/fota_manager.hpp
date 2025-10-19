@@ -216,7 +216,7 @@ private:
     
     // State persistence file
     static constexpr const char* STATE_FILE = "/fota_state.json";
-    static constexpr const char* FIRMWARE_FILE = "/fota_firmware.bin";
+    // REMOVED: FIRMWARE_FILE - no longer needed, writing directly to OTA partition
     static constexpr const char* BOOT_COUNT_FILE = "/boot_count.txt";
     
     // Maximum boot attempts before rollback
@@ -232,8 +232,7 @@ private:
     bool saveState();
     bool loadState();
     bool saveFirmwareChunk(uint32_t chunk_number, const uint8_t* data, size_t size);
-    bool loadFirmwareForVerification();
-    bool clearFirmwareFile();
+    // REMOVED: loadFirmwareForVerification() and clearFirmwareFile() - no longer needed
     void setState(FOTAState state, const std::string& error = "");
     bool verifyChunkHMAC(const uint8_t* data, size_t size, const std::string& mac);
     int getBootCount();
